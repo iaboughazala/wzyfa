@@ -344,6 +344,166 @@
     .btn-copy:hover { border-color: var(--cyan); color: var(--cyan); }
     .btn-copy.copied { border-color: var(--green); color: var(--green); }
 
+    .btn-send-single {
+      background: var(--green);
+      color: white;
+      border: none;
+      padding: 0.3rem 0.6rem;
+      border-radius: 6px;
+      font-family: 'IBM Plex Sans Arabic', sans-serif;
+      font-size: 0.7rem;
+      cursor: pointer;
+      font-weight: 500;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+    .btn-send-single:hover { opacity: 0.85; }
+    .btn-send-single:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-send-single.sent { background: var(--text-dim); }
+
+    /* Settings Panel */
+    .settings-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 500;
+      justify-content: center;
+      align-items: center;
+    }
+    .settings-overlay.show { display: flex; }
+
+    .settings-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      width: 90%;
+      max-width: 550px;
+      max-height: 85vh;
+      overflow-y: auto;
+      direction: rtl;
+    }
+
+    .settings-panel h2 {
+      color: var(--accent);
+      margin-bottom: 1.5rem;
+      font-size: 1.2rem;
+    }
+
+    .settings-panel h3 {
+      color: var(--text);
+      margin: 1.5rem 0 0.75rem;
+      font-size: 0.95rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.6rem 0.75rem;
+      border-radius: 8px;
+      font-family: 'IBM Plex Sans Arabic', sans-serif;
+      font-size: 0.85rem;
+      outline: none;
+    }
+
+    .form-group input:focus, .form-group textarea:focus {
+      border-color: var(--accent);
+    }
+
+    .form-group textarea { min-height: 80px; resize: vertical; }
+
+    .form-group input[type="file"] {
+      padding: 0.4rem;
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-success { background: var(--green); }
+    .btn-success:hover { opacity: 0.9; }
+    .btn-danger { background: var(--red); }
+    .btn-secondary { background: var(--bg-input); border: 1px solid var(--border); }
+    .btn-secondary:hover { border-color: var(--accent); }
+
+    .status-msg {
+      margin-top: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      display: none;
+    }
+    .status-msg.ok { display: block; background: rgba(34,197,94,0.15); color: var(--green); }
+    .status-msg.err { display: block; background: rgba(239,68,68,0.15); color: var(--red); }
+
+    .cv-info {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+    .cv-info.has-cv { color: var(--green); }
+
+    /* Bulk send bar */
+    .bulk-bar {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .bulk-bar .bulk-info {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .bulk-bar .bulk-info strong {
+      color: var(--green);
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-input);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+      display: none;
+    }
+    .progress-bar-wrap.active { display: block; }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--green);
+      border-radius: 3px;
+      transition: width 0.5s ease;
+      width: 0%;
+    }
+
     /* Pagination */
     .pagination {
       display: flex;
@@ -495,9 +655,25 @@
       <span class="stat-value mono" id="lastUpdate" style="font-size: 0.85rem;">--</span>
     </div>
     <button class="btn btn-scan" id="scanBtn" onclick="triggerScan()">فحص يدوي</button>
+    <button class="btn btn-scan" onclick="openSettings()" style="border-color: var(--purple); color: var(--purple);">&#9881; الإعدادات</button>
   </div>
 
   <div class="container">
+    <!-- Bulk Send Bar -->
+    <div class="bulk-bar" id="bulkBar">
+      <div>
+        <span class="bulk-info" id="bulkInfo">&#9993; إرسال CV تلقائي لجميع الوظائف</span>
+        <div class="progress-bar-wrap" id="progressWrap">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="bulk-info" id="progressText" style="margin-top:0.3rem; display:none;"></div>
+      </div>
+      <div style="display:flex; gap:0.5rem; align-items:center;">
+        <span class="bulk-info" id="sentCount"></span>
+        <button class="btn btn-success" id="bulkSendBtn" onclick="bulkSend()">&#9654; أرسل للكل</button>
+      </div>
+    </div>
+
     <div class="filter-bar">
       <input type="text" id="searchInput" placeholder="بحث بالمسمى، الشركة، أو الإيميل...">
       <select id="countryFilter">
@@ -557,6 +733,80 @@
 
   <div class="toast" id="toast">تم نسخ الإيميل!</div>
 
+  <!-- Settings Panel -->
+  <div class="settings-overlay" id="settingsOverlay" onclick="if(event.target===this)closeSettings()">
+    <div class="settings-panel">
+      <h2>&#9881; إعدادات الإرسال التلقائي</h2>
+
+      <h3>&#128206; السيرة الذاتية (CV)</h3>
+      <div class="form-group">
+        <label>رفع ملف CV (PDF, DOC, DOCX)</label>
+        <input type="file" id="cvFile" accept=".pdf,.doc,.docx">
+        <div class="cv-info" id="cvInfo">لم يتم رفع ملف بعد</div>
+      </div>
+      <button class="btn btn-success" onclick="uploadCV()" style="font-size:0.8rem; padding:0.4rem 1rem;">رفع CV</button>
+      <div class="status-msg" id="cvStatus"></div>
+
+      <h3>&#128231; إعدادات SMTP</h3>
+      <div class="form-group">
+        <label>مزود البريد</label>
+        <select id="smtpPreset" onchange="applySmtpPreset()">
+          <option value="">-- اختر أو أدخل يدوياً --</option>
+          <option value="gmail">Gmail</option>
+          <option value="outlook">Outlook / Hotmail</option>
+          <option value="yahoo">Yahoo</option>
+          <option value="custom">إعداد يدوي</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>SMTP Host</label>
+        <input type="text" id="smtpHost" placeholder="smtp.gmail.com" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label>Port</label>
+        <input type="number" id="smtpPort" placeholder="587" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label>البريد الإلكتروني</label>
+        <input type="email" id="smtpUser" placeholder="your@email.com" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label>كلمة مرور التطبيق (App Password)</label>
+        <input type="password" id="smtpPass" placeholder="xxxx xxxx xxxx xxxx" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label>اسم المرسل</label>
+        <input type="text" id="senderName" placeholder="اسمك الكامل">
+      </div>
+
+      <h3>&#9997; نموذج الرسالة</h3>
+      <div class="form-group">
+        <label>عنوان الرسالة (Subject)</label>
+        <input type="text" id="emailSubject" placeholder="Application for: {title}" dir="auto">
+        <div class="cv-info">استخدم {title} لاسم الوظيفة و {company} لاسم الشركة</div>
+      </div>
+      <div class="form-group">
+        <label>نص الرسالة</label>
+        <textarea id="emailBody" dir="auto" placeholder="Dear Hiring Manager,
+
+I am writing to express my interest in the {title} position at {company}.
+
+Please find my CV attached for your review.
+
+Best regards,
+{email}"></textarea>
+        <div class="cv-info">متغيرات متاحة: {title}, {company}, {email}</div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-success" onclick="saveSmtpConfig()">&#128190; حفظ الإعدادات</button>
+        <button class="btn" onclick="testSmtp()">&#128268; اختبار الاتصال</button>
+        <button class="btn btn-secondary" onclick="closeSettings()">إغلاق</button>
+      </div>
+      <div class="status-msg" id="smtpStatus"></div>
+    </div>
+  </div>
+
   <script>
     const PER_PAGE = 50;
     let currentPage = 1;
@@ -581,12 +831,246 @@
     const scanBtn = document.getElementById('scanBtn');
     const toast = document.getElementById('toast');
 
+    let sentEmailKeys = new Set();
+    let smtpReady = false;
+    let cvReady = false;
+
     // Copy to clipboard
     function copyEmail(email) {
       navigator.clipboard.writeText(email).then(() => {
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 2000);
+        showToast('تم نسخ الإيميل!');
       });
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    // ─── Settings ───
+    function openSettings() {
+      document.getElementById('settingsOverlay').classList.add('show');
+      loadSmtpConfig();
+      loadCVInfo();
+    }
+
+    function closeSettings() {
+      document.getElementById('settingsOverlay').classList.remove('show');
+    }
+
+    function applySmtpPreset() {
+      const preset = document.getElementById('smtpPreset').value;
+      const hostEl = document.getElementById('smtpHost');
+      const portEl = document.getElementById('smtpPort');
+      if (preset === 'gmail') { hostEl.value = 'smtp.gmail.com'; portEl.value = 587; }
+      else if (preset === 'outlook') { hostEl.value = 'smtp-mail.outlook.com'; portEl.value = 587; }
+      else if (preset === 'yahoo') { hostEl.value = 'smtp.mail.yahoo.com'; portEl.value = 587; }
+    }
+
+    async function saveSmtpConfig() {
+      const status = document.getElementById('smtpStatus');
+      try {
+        const res = await fetch('/api/smtp/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            host: document.getElementById('smtpHost').value,
+            port: parseInt(document.getElementById('smtpPort').value) || 587,
+            user: document.getElementById('smtpUser').value,
+            pass: document.getElementById('smtpPass').value,
+            senderName: document.getElementById('senderName').value,
+            subject: document.getElementById('emailSubject').value,
+            body: document.getElementById('emailBody').value
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          status.className = 'status-msg ok';
+          status.textContent = 'تم حفظ الإعدادات بنجاح';
+          smtpReady = true;
+          updateBulkBar();
+        } else {
+          status.className = 'status-msg err';
+          status.textContent = data.error || 'خطأ في الحفظ';
+        }
+      } catch (e) {
+        status.className = 'status-msg err';
+        status.textContent = 'خطأ في الاتصال';
+      }
+    }
+
+    async function loadSmtpConfig() {
+      try {
+        const res = await fetch('/api/smtp/config');
+        const data = await res.json();
+        if (data.configured) {
+          document.getElementById('smtpHost').value = data.host || '';
+          document.getElementById('smtpPort').value = data.port || 587;
+          document.getElementById('smtpUser').value = data.user || '';
+          document.getElementById('senderName').value = data.senderName || '';
+          document.getElementById('emailSubject').value = data.subject || '';
+          document.getElementById('emailBody').value = data.body || '';
+          smtpReady = true;
+        }
+      } catch (e) {}
+    }
+
+    async function testSmtp() {
+      const status = document.getElementById('smtpStatus');
+      status.className = 'status-msg ok';
+      status.textContent = 'جاري الاختبار...';
+      try {
+        const res = await fetch('/api/smtp/test', { method: 'POST' });
+        const data = await res.json();
+        status.className = data.success ? 'status-msg ok' : 'status-msg err';
+        status.textContent = data.success ? 'الاتصال ناجح! جاهز للإرسال' : 'فشل: ' + data.message;
+      } catch (e) {
+        status.className = 'status-msg err';
+        status.textContent = 'خطأ في الاتصال';
+      }
+    }
+
+    async function uploadCV() {
+      const fileInput = document.getElementById('cvFile');
+      const status = document.getElementById('cvStatus');
+      if (!fileInput.files[0]) {
+        status.className = 'status-msg err';
+        status.textContent = 'اختر ملف أولاً';
+        return;
+      }
+      const formData = new FormData();
+      formData.append('cv', fileInput.files[0]);
+      try {
+        const res = await fetch('/api/cv/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (res.ok) {
+          status.className = 'status-msg ok';
+          status.textContent = 'تم رفع ' + data.filename;
+          cvReady = true;
+          loadCVInfo();
+          updateBulkBar();
+        } else {
+          status.className = 'status-msg err';
+          status.textContent = data.error;
+        }
+      } catch (e) {
+        status.className = 'status-msg err';
+        status.textContent = 'خطأ في الرفع';
+      }
+    }
+
+    async function loadCVInfo() {
+      try {
+        const res = await fetch('/api/cv/info');
+        const data = await res.json();
+        const info = document.getElementById('cvInfo');
+        if (data.uploaded) {
+          const size = (data.size / 1024).toFixed(0);
+          info.className = 'cv-info has-cv';
+          info.textContent = data.filename + ' (' + size + ' KB)';
+          cvReady = true;
+        } else {
+          info.className = 'cv-info';
+          info.textContent = 'لم يتم رفع ملف بعد';
+          cvReady = false;
+        }
+      } catch (e) {}
+    }
+
+    // ─── Sending ───
+    async function sendSingle(email, title, company, btn) {
+      btn.disabled = true;
+      btn.textContent = 'جاري...';
+      try {
+        const res = await fetch('/api/send-cv', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, title, company })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          btn.textContent = 'تم الإرسال';
+          btn.classList.add('sent');
+          sentEmailKeys.add(`${email}|||${(title||'').toLowerCase()}`);
+          showToast('تم إرسال CV إلى ' + email);
+        } else {
+          btn.textContent = 'فشل';
+          btn.disabled = false;
+          showToast(data.error || 'خطأ في الإرسال');
+        }
+      } catch (e) {
+        btn.textContent = 'خطأ';
+        btn.disabled = false;
+      }
+    }
+
+    async function bulkSend() {
+      const btn = document.getElementById('bulkSendBtn');
+      if (!smtpReady || !cvReady) {
+        showToast('يجب إعداد SMTP ورفع CV أولاً');
+        openSettings();
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'جاري الإرسال...';
+      try {
+        const res = await fetch('/api/send-cv/bulk', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message);
+        pollProgress();
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'أرسل للكل';
+      }
+    }
+
+    async function pollProgress() {
+      const wrap = document.getElementById('progressWrap');
+      const fill = document.getElementById('progressFill');
+      const text = document.getElementById('progressText');
+      const btn = document.getElementById('bulkSendBtn');
+      wrap.classList.add('active');
+      text.style.display = 'block';
+
+      const interval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/send-cv/progress');
+          const p = await res.json();
+          const pct = p.total > 0 ? Math.round(((p.sent + p.failed) / p.total) * 100) : 0;
+          fill.style.width = pct + '%';
+          text.textContent = `تم إرسال ${p.sent} من ${p.total} | فشل: ${p.failed} | متبقي: ${p.queueRemaining}`;
+
+          if (!p.active && p.queueRemaining === 0) {
+            clearInterval(interval);
+            btn.disabled = false;
+            btn.textContent = 'أرسل للكل';
+            showToast(`اكتمل! تم إرسال ${p.sent} إيميل`);
+            loadSentHistory();
+            fetchJobs();
+          }
+        } catch (e) {}
+      }, 3000);
+    }
+
+    async function loadSentHistory() {
+      try {
+        const res = await fetch('/api/send-cv/history');
+        const data = await res.json();
+        sentEmailKeys = new Set(data.sent.map(s => s.key));
+        updateBulkBar();
+      } catch (e) {}
+    }
+
+    function updateBulkBar() {
+      const info = document.getElementById('sentCount');
+      info.textContent = sentEmailKeys.size > 0 ? `تم إرسال ${sentEmailKeys.size} سابقاً` : '';
+      const btn = document.getElementById('bulkSendBtn');
+      if (!smtpReady || !cvReady) {
+        btn.textContent = '\u2699 أعدّ الإعدادات أولاً';
+      } else {
+        btn.innerHTML = '&#9654; أرسل للكل';
+      }
     }
 
     // Fetch jobs
@@ -679,6 +1163,14 @@
           ? `<a href="${url}" target="_blank" rel="noopener" class="job-title-link">${title}</a>`
           : `<span class="job-title-link">${title}</span>`;
 
+        const sentKey = `${(job.email||'').toLowerCase().trim()}|||${(job.title||'').toLowerCase().trim()}`;
+        const isSent = sentEmailKeys.has(sentKey);
+        const sendBtnHtml = isSent
+          ? `<button class="btn-send-single sent" disabled>تم الإرسال</button>`
+          : (smtpReady && cvReady)
+            ? `<button class="btn-send-single" onclick="sendSingle('${email}','${title.replace(/'/g,"\\'")}','${company.replace(/'/g,"\\'")}',this)">&#9654; أرسل</button>`
+            : '';
+
         return `<tr>
           <td>${titleHtml}</td>
           <td class="company-name">${company}</td>
@@ -688,7 +1180,8 @@
           <td class="date-text hide-mobile">${dateStr}</td>
           <td>
             <div class="actions-cell">
-              <a href="mailto:${email}?subject=${mailtoSubject}&body=${mailtoBody}" class="btn-mailto">&#9993; أرسل CV</a>
+              ${sendBtnHtml}
+              <a href="mailto:${email}?subject=${mailtoSubject}&body=${mailtoBody}" class="btn-mailto">&#9993; mailto</a>
               <button class="btn-copy" onclick="copyEmail('${email}')" title="نسخ الإيميل">&#128203;</button>
             </div>
           </td>
@@ -795,8 +1288,13 @@
     }
 
     // Init
-    fetchJobs();
-    fetchStatus();
+    async function init() {
+      await Promise.all([loadSentHistory(), loadSmtpConfig(), loadCVInfo()]);
+      updateBulkBar();
+      fetchJobs();
+      fetchStatus();
+    }
+    init();
 
     // Auto-refresh every 60 seconds
     setInterval(() => {

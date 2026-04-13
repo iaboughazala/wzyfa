@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const nodemailer = require('nodemailer');
+const multer = require('multer');
 
 const app = express();
 app.use(cors());
@@ -16,8 +18,133 @@ const JOBS_FILE = path.join(DATA_DIR, 'jobs.json');
 const MAX_JOBS = 500;
 const EMAIL_JOBS_FILE = path.join(DATA_DIR, 'email-jobs.json');
 const MAX_EMAIL_JOBS = 300;
+const SENT_FILE = path.join(DATA_DIR, 'sent-emails.json');
+const SMTP_CONFIG_FILE = path.join(DATA_DIR, 'smtp-config.json');
+const CV_DIR = path.join(DATA_DIR, 'cv');
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(CV_DIR)) fs.mkdirSync(CV_DIR, { recursive: true });
+
+// ─── CV Upload Setup ───
+const cvStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, CV_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, 'cv' + ext);
+  }
+});
+const uploadCV = multer({
+  storage: cvStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.pdf', '.doc', '.docx'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error('Only PDF, DOC, DOCX files allowed'));
+  }
+});
+
+// ─── SMTP & Sent Helpers ───
+function loadSmtpConfig() {
+  try {
+    if (fs.existsSync(SMTP_CONFIG_FILE)) return JSON.parse(fs.readFileSync(SMTP_CONFIG_FILE, 'utf-8'));
+  } catch (e) {}
+  return null;
+}
+
+function saveSmtpConfig(config) {
+  fs.writeFileSync(SMTP_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+function loadSentEmails() {
+  try {
+    if (fs.existsSync(SENT_FILE)) return JSON.parse(fs.readFileSync(SENT_FILE, 'utf-8'));
+  } catch (e) {}
+  return [];
+}
+
+function saveSentEmails(sent) {
+  fs.writeFileSync(SENT_FILE, JSON.stringify(sent, null, 2), 'utf-8');
+}
+
+function getCVPath() {
+  const exts = ['.pdf', '.doc', '.docx'];
+  for (const ext of exts) {
+    const p = path.join(CV_DIR, 'cv' + ext);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+// ─── Email Sending Queue ───
+let sendingQueue = [];
+let isSending = false;
+let sendProgress = { total: 0, sent: 0, failed: 0, active: false };
+
+async function processEmailQueue() {
+  if (isSending || sendingQueue.length === 0) return;
+  isSending = true;
+  sendProgress.active = true;
+
+  const smtpConfig = loadSmtpConfig();
+  if (!smtpConfig) {
+    isSending = false;
+    sendProgress.active = false;
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: smtpConfig.port === 465,
+    auth: { user: smtpConfig.user, pass: smtpConfig.pass }
+  });
+
+  const cvPath = getCVPath();
+  const sent = loadSentEmails();
+
+  while (sendingQueue.length > 0) {
+    const job = sendingQueue.shift();
+
+    // Skip if already sent
+    const key = `${job.email}|||${(job.title || '').toLowerCase()}`;
+    if (sent.some(s => s.key === key)) {
+      sendProgress.sent++;
+      continue;
+    }
+
+    try {
+      const mailOptions = {
+        from: `${smtpConfig.senderName || smtpConfig.user} <${smtpConfig.user}>`,
+        to: job.email,
+        subject: smtpConfig.subject || `Application: ${job.title}`,
+        text: (smtpConfig.body || 'Please find my CV attached for the position of {title} at {company}.')
+          .replace(/{title}/g, job.title || 'the open position')
+          .replace(/{company}/g, job.company || 'your company')
+          .replace(/{email}/g, smtpConfig.user),
+        attachments: cvPath ? [{ filename: path.basename(cvPath), path: cvPath }] : []
+      };
+
+      await transporter.sendMail(mailOptions);
+      sent.push({ key, email: job.email, title: job.title, company: job.company, sentAt: new Date().toISOString() });
+      saveSentEmails(sent);
+      sendProgress.sent++;
+      console.log(`[AutoSend] Sent to ${job.email} for "${job.title}"`);
+    } catch (e) {
+      sendProgress.failed++;
+      console.error(`[AutoSend] Failed ${job.email}:`, e.message);
+    }
+
+    // Rate limit: wait 30-45 seconds between emails
+    if (sendingQueue.length > 0) {
+      await sleep(30000 + Math.random() * 15000);
+    }
+  }
+
+  isSending = false;
+  sendProgress.active = false;
+  console.log(`[AutoSend] Queue complete. Sent: ${sendProgress.sent}, Failed: ${sendProgress.failed}`);
+}
 
 // ─── State ───
 let scanning = false;
@@ -1053,6 +1180,115 @@ app.post('/api/email-jobs/scan', (req, res) => {
   }
   res.json({ message: 'Email scan started' });
   runEmailJobsScan();
+});
+
+// ═══════════════════════════════════════
+// ─── Auto-Send CV Routes ───
+// ═══════════════════════════════════════
+
+// Upload CV
+app.post('/api/cv/upload', uploadCV.single('cv'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  // Remove old CVs with different extensions
+  const exts = ['.pdf', '.doc', '.docx'];
+  for (const ext of exts) {
+    const p = path.join(CV_DIR, 'cv' + ext);
+    if (p !== req.file.path && fs.existsSync(p)) fs.unlinkSync(p);
+  }
+  res.json({ message: 'CV uploaded', filename: req.file.originalname, size: req.file.size });
+});
+
+// Get CV info
+app.get('/api/cv/info', (req, res) => {
+  const cvPath = getCVPath();
+  if (!cvPath) return res.json({ uploaded: false });
+  const stat = fs.statSync(cvPath);
+  res.json({ uploaded: true, filename: path.basename(cvPath), size: stat.size, uploadedAt: stat.mtime.toISOString() });
+});
+
+// Save SMTP config
+app.post('/api/smtp/config', (req, res) => {
+  const { host, port, user, pass, senderName, subject, body } = req.body;
+  if (!host || !user || !pass) return res.status(400).json({ error: 'host, user, pass required' });
+  saveSmtpConfig({ host, port: port || 587, user, pass, senderName: senderName || '', subject: subject || '', body: body || '' });
+  res.json({ message: 'SMTP config saved' });
+});
+
+// Get SMTP config (hide password)
+app.get('/api/smtp/config', (req, res) => {
+  const config = loadSmtpConfig();
+  if (!config) return res.json({ configured: false });
+  res.json({ configured: true, host: config.host, port: config.port, user: config.user, senderName: config.senderName, subject: config.subject, body: config.body });
+});
+
+// Test SMTP connection
+app.post('/api/smtp/test', async (req, res) => {
+  const config = loadSmtpConfig();
+  if (!config) return res.status(400).json({ error: 'SMTP not configured' });
+  try {
+    const transporter = nodemailer.createTransport({
+      host: config.host, port: config.port, secure: config.port === 465,
+      auth: { user: config.user, pass: config.pass }
+    });
+    await transporter.verify();
+    res.json({ success: true, message: 'SMTP connection OK' });
+  } catch (e) {
+    res.json({ success: false, message: e.message });
+  }
+});
+
+// Send CV to single job
+app.post('/api/send-cv', async (req, res) => {
+  const { email, title, company } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const config = loadSmtpConfig();
+  if (!config) return res.status(400).json({ error: 'SMTP not configured' });
+  const cvPath = getCVPath();
+  if (!cvPath) return res.status(400).json({ error: 'CV not uploaded' });
+
+  sendingQueue.push({ email, title, company });
+  sendProgress.total++;
+  processEmailQueue();
+  res.json({ message: 'Added to send queue' });
+});
+
+// Send CV to all unsent jobs (bulk)
+app.post('/api/send-cv/bulk', (req, res) => {
+  const config = loadSmtpConfig();
+  if (!config) return res.status(400).json({ error: 'SMTP not configured' });
+  const cvPath = getCVPath();
+  if (!cvPath) return res.status(400).json({ error: 'CV not uploaded' });
+
+  const jobs = loadEmailJobs();
+  const sent = loadSentEmails();
+  const sentKeys = new Set(sent.map(s => s.key));
+
+  let added = 0;
+  for (const job of jobs) {
+    if (!job.email) continue;
+    const key = `${job.email}|||${(job.title || '').toLowerCase()}`;
+    if (sentKeys.has(key)) continue;
+    sendingQueue.push({ email: job.email, title: job.title, company: job.company });
+    added++;
+  }
+
+  sendProgress = { total: added, sent: 0, failed: 0, active: true };
+  processEmailQueue();
+  res.json({ message: `${added} emails queued for sending` });
+});
+
+// Get send progress
+app.get('/api/send-cv/progress', (req, res) => {
+  res.json({
+    ...sendProgress,
+    queueRemaining: sendingQueue.length
+  });
+});
+
+// Get sent emails history
+app.get('/api/send-cv/history', (req, res) => {
+  const sent = loadSentEmails();
+  res.json({ total: sent.length, sent });
 });
 
 // ─── Start ───
