@@ -14,12 +14,16 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const JOBS_FILE = path.join(DATA_DIR, 'jobs.json');
 const MAX_JOBS = 500;
+const EMAIL_JOBS_FILE = path.join(DATA_DIR, 'email-jobs.json');
+const MAX_EMAIL_JOBS = 300;
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ─── State ───
 let scanning = false;
 let lastScan = null;
+let emailScanning = false;
+let emailLastScan = null;
 
 // ─── Keywords & Locations ───
 const ALL_KEYWORDS = [
@@ -106,6 +110,70 @@ function detectCountry(text) {
   if (t.includes('jordan') || t.includes('amman')) return 'Jordan';
   if (t.includes('remote')) return 'Remote';
   return '';
+}
+
+// ─── Email Jobs Helpers ───
+function loadEmailJobs() {
+  try {
+    if (fs.existsSync(EMAIL_JOBS_FILE)) {
+      return JSON.parse(fs.readFileSync(EMAIL_JOBS_FILE, 'utf-8'));
+    }
+  } catch (e) {
+    console.error('Error loading email jobs:', e.message);
+  }
+  return [];
+}
+
+function saveEmailJobs(jobs) {
+  fs.writeFileSync(EMAIL_JOBS_FILE, JSON.stringify(jobs, null, 2), 'utf-8');
+}
+
+function deduplicateEmailJobs(jobs) {
+  const seen = new Map();
+  for (const job of jobs) {
+    const key = `${(job.email || '').toLowerCase().trim()}|||${(job.title || '').toLowerCase().trim()}`;
+    if (!seen.has(key)) {
+      seen.set(key, job);
+    }
+  }
+  return Array.from(seen.values()).slice(0, MAX_EMAIL_JOBS);
+}
+
+function extractEmails(text) {
+  if (!text) return [];
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const matches = text.match(emailRegex) || [];
+  const blocked = ['noreply', 'no-reply', 'mailer-daemon', 'postmaster', 'abuse@', 'spam@', 'admin@example', 'test@'];
+  return [...new Set(matches)].filter(email => {
+    const lower = email.toLowerCase();
+    return !blocked.some(b => lower.includes(b)) && !lower.endsWith('.png') && !lower.endsWith('.jpg');
+  });
+}
+
+function extractJobTitleFromText(text) {
+  const patterns = [
+    /(?:مطلوب|نبحث عن|وظيفة|فرصة عمل|hiring|looking for|we need|job opening|position)[:\s]*([^\n.،,]{5,60})/i,
+    /(?:vacancy|role|opening)[:\s]*([^\n.،,]{5,60})/i
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) return m[1].trim();
+  }
+  // Fallback: use first meaningful line
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 10 && l.length < 100);
+  return lines[0] || 'وظيفة شاغرة';
+}
+
+function extractCompanyFromText(text) {
+  const patterns = [
+    /(?:شركة|مؤسسة|company|at|@)\s+([^\n.،,]{3,40})/i,
+    /(?:hiring at|join)\s+([^\n.،,]{3,40})/i
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) return m[1].trim();
+  }
+  return 'غير محدد';
 }
 
 function fetchJSON(url, options = {}) {
@@ -477,6 +545,292 @@ async function fetchGulfTalent(browser) {
   return jobs;
 }
 
+// ═══════════════════════════════════════════════════════
+// ─── Email Jobs Scraping Sources ───
+// ═══════════════════════════════════════════════════════
+
+const EMAIL_SEARCH_QUERIES_EN = [
+  '"send your CV to" OR "send resume to" OR "email your CV"',
+  '"apply by email" OR "submit your CV" OR "forward your resume"',
+];
+
+const EMAIL_SEARCH_QUERIES_AR = [
+  '"ارسل السيرة الذاتية" OR "ارسال السي في" OR "يرجى ارسال"',
+  '"مطلوب" AND "ايميل" OR "البريد الالكتروني"',
+];
+
+const EMAIL_SEARCH_LOCATIONS = ['Saudi Arabia', 'UAE', 'Dubai', 'Qatar'];
+
+// ─── Source: Google Search for Email Jobs ───
+async function fetchGoogleEmailJobs(browser) {
+  console.log('[EmailJobs-Google] Fetching...');
+  const jobs = [];
+  let page;
+  try {
+    page = await setupPage(browser);
+
+    const allQueries = [];
+    for (const q of [...EMAIL_SEARCH_QUERIES_EN, ...EMAIL_SEARCH_QUERIES_AR]) {
+      for (const loc of EMAIL_SEARCH_LOCATIONS) {
+        for (const kw of TOP5_KEYWORDS) {
+          allQueries.push(`${kw} ${loc} ${q}`);
+        }
+      }
+    }
+
+    // Limit to avoid rate limiting — pick a subset
+    const queries = allQueries.slice(0, 20);
+
+    for (const query of queries) {
+      try {
+        const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`;
+        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await sleep(2000 + Math.random() * 3000);
+
+        const results = await page.evaluate(() => {
+          const items = document.querySelectorAll('.g, .tF2Cxc');
+          const out = [];
+          items.forEach(item => {
+            const titleEl = item.querySelector('h3');
+            const snippetEl = item.querySelector('.VwiC3b, .IsZvec, .s3v9rd');
+            const linkEl = item.querySelector('a[href]');
+            out.push({
+              title: titleEl ? titleEl.textContent.trim() : '',
+              snippet: snippetEl ? snippetEl.textContent.trim() : '',
+              url: linkEl ? linkEl.href : ''
+            });
+          });
+          return out;
+        });
+
+        for (const r of results) {
+          const fullText = `${r.title} ${r.snippet}`;
+          const emails = extractEmails(fullText);
+          if (emails.length === 0) continue;
+
+          for (const email of emails) {
+            jobs.push({
+              title: r.title || extractJobTitleFromText(fullText),
+              company: extractCompanyFromText(fullText),
+              email,
+              location: EMAIL_SEARCH_LOCATIONS.find(loc => fullText.toLowerCase().includes(loc.toLowerCase())) || '',
+              url: r.url || '',
+              source: 'Google',
+              country: detectCountry(fullText),
+              postedDate: new Date().toISOString(),
+              scrapedAt: new Date().toISOString()
+            });
+          }
+        }
+
+        console.log(`[EmailJobs-Google] Query done, total so far: ${jobs.length}`);
+        await sleep(3000 + Math.random() * 4000); // Be gentle with Google
+      } catch (e) {
+        console.error(`[EmailJobs-Google] Query error:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[EmailJobs-Google] Fatal:', e.message);
+  } finally {
+    if (page) await page.close().catch(() => {});
+  }
+  console.log(`[EmailJobs-Google] Total: ${jobs.length} email jobs`);
+  return jobs;
+}
+
+// ─── Source: Twitter/X Search for Email Jobs ───
+async function fetchTwitterEmailJobs(browser) {
+  console.log('[EmailJobs-Twitter] Fetching...');
+  const jobs = [];
+  let page;
+  try {
+    page = await setupPage(browser);
+
+    const twitterQueries = [
+      'hiring "send CV" OR "send resume" Saudi OR UAE OR Dubai OR Qatar',
+      'مطلوب "ارسل السيرة" OR "ايميل" توظيف',
+      '"send your CV to" hiring OR job OR vacancy',
+      'وظيفة "ارسال السي في" OR "البريد"',
+    ];
+
+    for (const query of twitterQueries) {
+      try {
+        // Use Twitter search via Nitter or direct Twitter search
+        const searchUrl = `https://twitter.com/search?q=${encodeURIComponent(query)}&f=live`;
+        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await sleep(3000 + Math.random() * 2000);
+
+        // Scroll to load tweets
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await sleep(2000);
+
+        const tweets = await page.evaluate(() => {
+          const tweetEls = document.querySelectorAll('[data-testid="tweetText"], article [lang]');
+          const out = [];
+          tweetEls.forEach(el => {
+            out.push(el.textContent.trim());
+          });
+          return out;
+        });
+
+        for (const tweetText of tweets) {
+          const emails = extractEmails(tweetText);
+          if (emails.length === 0) continue;
+
+          for (const email of emails) {
+            jobs.push({
+              title: extractJobTitleFromText(tweetText),
+              company: extractCompanyFromText(tweetText),
+              email,
+              location: detectCountry(tweetText) || '',
+              url: '',
+              source: 'Twitter',
+              country: detectCountry(tweetText),
+              postedDate: new Date().toISOString(),
+              scrapedAt: new Date().toISOString()
+            });
+          }
+        }
+
+        console.log(`[EmailJobs-Twitter] Query done, total so far: ${jobs.length}`);
+        await sleep(3000 + Math.random() * 3000);
+      } catch (e) {
+        console.error(`[EmailJobs-Twitter] Query error:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[EmailJobs-Twitter] Fatal:', e.message);
+  } finally {
+    if (page) await page.close().catch(() => {});
+  }
+  console.log(`[EmailJobs-Twitter] Total: ${jobs.length} email jobs`);
+  return jobs;
+}
+
+// ─── Source: Bayt.com Email Jobs ───
+async function fetchBaytEmailJobs(browser) {
+  console.log('[EmailJobs-Bayt] Fetching...');
+  const jobs = [];
+  let page;
+  try {
+    page = await setupPage(browser);
+
+    for (const kw of TOP5_KEYWORDS) {
+      try {
+        const url = `https://www.bayt.com/en/international/jobs/${encodeURIComponent(kw.toLowerCase().replace(/\s+/g, '-'))}-jobs/`;
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await sleep(2000 + Math.random() * 2000);
+
+        const results = await page.evaluate(() => {
+          const cards = document.querySelectorAll('[class*="job"], .card, li[class*="has-icon"]');
+          const out = [];
+          cards.forEach(card => {
+            const titleEl = card.querySelector('h2 a, h3 a, [class*="title"] a');
+            const companyEl = card.querySelector('[class*="company"], [class*="info"]');
+            const locationEl = card.querySelector('[class*="location"]');
+            const linkEl = card.querySelector('a');
+            let href = linkEl ? linkEl.getAttribute('href') : '';
+            if (href && !href.startsWith('http')) href = 'https://www.bayt.com' + href;
+            const text = card.textContent || '';
+            out.push({
+              title: titleEl ? titleEl.textContent.trim() : '',
+              company: companyEl ? companyEl.textContent.trim() : '',
+              location: locationEl ? locationEl.textContent.trim() : '',
+              url: href,
+              text
+            });
+          });
+          return out;
+        });
+
+        // Visit individual job pages to find email addresses
+        for (const r of results.slice(0, 5)) {
+          if (!r.url) continue;
+          try {
+            await page.goto(r.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            await sleep(1500);
+            const pageText = await page.evaluate(() => document.body.innerText);
+            const emails = extractEmails(pageText);
+            if (emails.length === 0) continue;
+
+            for (const email of emails) {
+              jobs.push({
+                title: r.title || extractJobTitleFromText(pageText),
+                company: r.company || extractCompanyFromText(pageText),
+                email,
+                location: r.location || '',
+                url: r.url,
+                source: 'Bayt',
+                country: detectCountry(r.location || pageText),
+                postedDate: new Date().toISOString(),
+                scrapedAt: new Date().toISOString()
+              });
+            }
+          } catch (e) {
+            // Skip individual page errors
+          }
+        }
+
+        console.log(`[EmailJobs-Bayt] "${kw}": ${jobs.length} total so far`);
+        await sleep(2000 + Math.random() * 2000);
+      } catch (e) {
+        console.error(`[EmailJobs-Bayt] Error for "${kw}":`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[EmailJobs-Bayt] Fatal:', e.message);
+  } finally {
+    if (page) await page.close().catch(() => {});
+  }
+  console.log(`[EmailJobs-Bayt] Total: ${jobs.length} email jobs`);
+  return jobs;
+}
+
+// ─── Email Jobs Scan Orchestrator ───
+async function runEmailJobsScan() {
+  if (emailScanning) {
+    console.log('[EmailScan] Already running, skipping...');
+    return;
+  }
+  emailScanning = true;
+  console.log('[EmailScan] ═══════════════════════════════════════');
+  console.log('[EmailScan] Email jobs scan started at', new Date().toISOString());
+
+  let allEmailJobs = loadEmailJobs();
+  let browser = null;
+
+  try {
+    browser = await launchBrowser();
+    console.log('[EmailScan] Browser launched');
+
+    // Source 1: Google
+    const googleJobs = await fetchGoogleEmailJobs(browser);
+    allEmailJobs = deduplicateEmailJobs([...googleJobs, ...allEmailJobs]);
+    saveEmailJobs(allEmailJobs);
+
+    // Source 2: Twitter
+    const twitterJobs = await fetchTwitterEmailJobs(browser);
+    allEmailJobs = deduplicateEmailJobs([...twitterJobs, ...allEmailJobs]);
+    saveEmailJobs(allEmailJobs);
+
+    // Source 3: Bayt
+    const baytJobs = await fetchBaytEmailJobs(browser);
+    allEmailJobs = deduplicateEmailJobs([...baytJobs, ...allEmailJobs]);
+    saveEmailJobs(allEmailJobs);
+
+    console.log(`[EmailScan] Total: ${allEmailJobs.length} email jobs saved`);
+  } catch (e) {
+    console.error('[EmailScan] Fatal error:', e.message);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+
+  emailScanning = false;
+  emailLastScan = new Date().toISOString();
+  console.log('[EmailScan] Complete at', emailLastScan);
+  console.log('[EmailScan] ═══════════════════════════════════════');
+}
+
 // ─── Deep Scan Orchestrator ───
 async function runDeepScan() {
   if (scanning) {
@@ -624,6 +978,83 @@ app.post('/api/scan', (req, res) => {
   runDeepScan();
 });
 
+// ═══════════════════════════════════════
+// ─── Email Jobs Routes ───
+// ═══════════════════════════════════════
+
+// Serve email jobs page
+app.get('/email-jobs', (req, res) => {
+  res.sendFile(path.join(__dirname, 'email-jobs.html'));
+});
+
+// Email Jobs API with filters
+app.get('/api/email-jobs', (req, res) => {
+  let jobs = loadEmailJobs();
+  const { q, country, date } = req.query;
+
+  if (q) {
+    const search = q.toLowerCase();
+    jobs = jobs.filter(j =>
+      (j.title || '').toLowerCase().includes(search) ||
+      (j.company || '').toLowerCase().includes(search) ||
+      (j.email || '').toLowerCase().includes(search)
+    );
+  }
+
+  if (country && country !== 'all') {
+    const c = country.toLowerCase();
+    jobs = jobs.filter(j =>
+      (j.country || '').toLowerCase().includes(c) ||
+      (j.location || '').toLowerCase().includes(c)
+    );
+  }
+
+  if (date) {
+    const days = parseInt(date, 10);
+    if (!isNaN(days)) {
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      jobs = jobs.filter(j => new Date(j.postedDate || j.scrapedAt) >= cutoff);
+    }
+  }
+
+  res.json({ total: jobs.length, jobs });
+});
+
+// Email Jobs Stats
+app.get('/api/email-jobs/stats', (req, res) => {
+  const jobs = loadEmailJobs();
+  const bySource = {};
+  for (const j of jobs) {
+    const s = j.source || 'Unknown';
+    bySource[s] = (bySource[s] || 0) + 1;
+  }
+  res.json({
+    total: jobs.length,
+    sources: Object.keys(bySource).length,
+    bySource,
+    lastScan: emailLastScan
+  });
+});
+
+// Email Jobs Status
+app.get('/api/email-jobs/status', (req, res) => {
+  const jobs = loadEmailJobs();
+  res.json({
+    scanning: emailScanning,
+    lastScan: emailLastScan,
+    totalJobs: jobs.length
+  });
+});
+
+// Email Jobs Manual Scan
+app.post('/api/email-jobs/scan', (req, res) => {
+  if (emailScanning) {
+    return res.json({ message: 'Email scan already in progress' });
+  }
+  res.json({ message: 'Email scan started' });
+  runEmailJobsScan();
+});
+
 // ─── Start ───
 app.listen(PORT, () => {
   console.log(`[Server] وظيفة running on http://localhost:${PORT}`);
@@ -634,9 +1065,20 @@ app.listen(PORT, () => {
     runDeepScan();
   }, 30000);
 
+  // Initial email jobs scan after 2 minutes
+  setTimeout(() => {
+    runEmailJobsScan();
+  }, 120000);
+
   // Scheduled scan every 4 hours
   cron.schedule('0 */4 * * *', () => {
     console.log('[Cron] Scheduled scan triggered');
     runDeepScan();
+  });
+
+  // Scheduled email jobs scan every 6 hours (offset by 2 hours)
+  cron.schedule('0 2,8,14,20 * * *', () => {
+    console.log('[Cron] Scheduled email jobs scan triggered');
+    runEmailJobsScan();
   });
 });

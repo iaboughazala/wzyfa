@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>وظيفة — محرك البحث عن وظائف</title>
+  <title>وظيفة — وظائف بالإيميل</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -82,6 +82,18 @@
       color: var(--text-muted);
       font-size: 1rem;
       font-weight: 300;
+    }
+
+    .badge-email {
+      display: inline-block;
+      background: rgba(168,85,247,0.15);
+      color: var(--purple);
+      padding: 0.2rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      margin-right: 0.5rem;
+      vertical-align: middle;
     }
 
     /* Stats Bar */
@@ -270,7 +282,15 @@
     .company-name { color: var(--text); }
     .location-text { color: var(--text-muted); font-size: 0.85rem; }
 
-    .platform-badge {
+    .email-text {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--cyan);
+      direction: ltr;
+      unicode-bidi: embed;
+    }
+
+    .source-badge {
       display: inline-block;
       padding: 0.2rem 0.6rem;
       border-radius: 9999px;
@@ -279,24 +299,50 @@
       font-family: 'JetBrains Mono', monospace;
     }
 
-    .platform-linkedin { background: rgba(0,119,181,0.15); color: #0077b5; }
-    .platform-indeed { background: rgba(37,87,167,0.15); color: #6366f1; }
-    .platform-gulftalent { background: rgba(34,197,94,0.15); color: #22c55e; }
-    .platform-remoteok { background: rgba(249,115,22,0.15); color: #f97316; }
-    .platform-remotive { background: rgba(168,85,247,0.15); color: #a855f7; }
-    .platform-jooble { background: rgba(236,72,153,0.15); color: #ec4899; }
+    .source-google { background: rgba(59,130,246,0.15); color: #3b82f6; }
+    .source-twitter { background: rgba(6,182,212,0.15); color: #06b6d4; }
+    .source-bayt { background: rgba(34,197,94,0.15); color: #22c55e; }
 
     .date-text { color: var(--text-dim); font-size: 0.8rem; font-family: 'JetBrains Mono', monospace; }
 
-    .open-link {
-      color: var(--text-dim);
-      text-decoration: none;
-      font-size: 1rem;
-      transition: color 0.15s;
-      display: inline-flex;
+    /* Action buttons */
+    .actions-cell {
+      display: flex;
+      gap: 0.4rem;
       align-items: center;
     }
-    .open-link:hover { color: var(--accent); }
+
+    .btn-mailto {
+      background: var(--purple);
+      color: white;
+      border: none;
+      padding: 0.3rem 0.7rem;
+      border-radius: 6px;
+      font-family: 'IBM Plex Sans Arabic', sans-serif;
+      font-size: 0.75rem;
+      cursor: pointer;
+      font-weight: 500;
+      text-decoration: none;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-mailto:hover { opacity: 0.85; }
+
+    .btn-copy {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 0.3rem 0.5rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+      line-height: 1;
+    }
+
+    .btn-copy:hover { border-color: var(--cyan); color: var(--cyan); }
+    .btn-copy.copied { border-color: var(--green); color: var(--green); }
 
     /* Pagination */
     .pagination {
@@ -378,13 +424,34 @@
       display: block;
       height: 100%;
       width: 30%;
-      background: var(--accent);
+      background: var(--purple);
       animation: loading 1s ease-in-out infinite;
     }
 
     @keyframes loading {
       0% { transform: translateX(-100%); }
       100% { transform: translateX(400%); }
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--bg-card);
+      border: 1px solid var(--green);
+      color: var(--green);
+      padding: 0.6rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      z-index: 200;
+      transition: transform 0.3s ease;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
     }
 
     /* Responsive */
@@ -396,6 +463,7 @@
       .jobs-table { font-size: 0.85rem; }
       .jobs-table td, .jobs-table th { padding: 0.6rem 0.5rem; }
       .hide-mobile { display: none; }
+      .actions-cell { flex-direction: column; gap: 0.3rem; }
     }
   </style>
 </head>
@@ -403,24 +471,24 @@
   <div class="loading-bar" id="loadingBar"></div>
 
   <nav class="nav">
-    <a href="/" class="active">وظائف المنصات</a>
-    <a href="/email-jobs">وظائف بالإيميل</a>
+    <a href="/">وظائف المنصات</a>
+    <a href="/email-jobs" class="active">وظائف بالإيميل</a>
   </nav>
 
   <header class="header">
-    <div class="logo">وظيفة</div>
-    <div class="subtitle">اكتشف آلاف الوظائف من جميع المنصات</div>
+    <div class="logo">وظيفة <span class="badge-email">بالإيميل</span></div>
+    <div class="subtitle">وظائف تقبل التقديم بإرسال السيرة الذاتية عبر الإيميل مباشرة</div>
   </header>
 
   <div class="stats-bar">
     <div class="stat-item">
       <div class="stat-dot" id="statusDot"></div>
       <span class="stat-value" id="totalJobs">0</span>
-      <span class="stat-label">وظيفة متاحة</span>
+      <span class="stat-label">وظيفة بالإيميل</span>
     </div>
     <div class="stat-item">
-      <span class="stat-value" id="platformCount">6</span>
-      <span class="stat-label">منصات</span>
+      <span class="stat-value" id="sourceCount">3</span>
+      <span class="stat-label">مصادر</span>
     </div>
     <div class="stat-item">
       <span class="stat-label">آخر تحديث:</span>
@@ -431,16 +499,7 @@
 
   <div class="container">
     <div class="filter-bar">
-      <input type="text" id="searchInput" placeholder="بحث بالمسمى أو الشركة...">
-      <select id="platformFilter">
-        <option value="all">الكل - المنصات</option>
-        <option value="LinkedIn">LinkedIn</option>
-        <option value="Indeed">Indeed</option>
-        <option value="GulfTalent">GulfTalent</option>
-        <option value="RemoteOK">RemoteOK</option>
-        <option value="Remotive">Remotive</option>
-        <option value="Jooble">Jooble</option>
-      </select>
+      <input type="text" id="searchInput" placeholder="بحث بالمسمى، الشركة، أو الإيميل...">
       <select id="countryFilter">
         <option value="all">الكل - الدول</option>
         <option value="saudi">السعودية</option>
@@ -451,13 +510,6 @@
         <option value="kuwait">الكويت</option>
         <option value="oman">عمان</option>
         <option value="jordan">الأردن</option>
-        <option value="remote">Remote</option>
-      </select>
-      <select id="workModeFilter">
-        <option value="all">الكل - نمط العمل</option>
-        <option value="remote">عن بعد</option>
-        <option value="hybrid">هجين</option>
-        <option value="onsite">حضوري</option>
       </select>
       <select id="dateFilter">
         <option value="">الكل - التاريخ</option>
@@ -479,10 +531,11 @@
           <tr>
             <th>المسمى الوظيفي</th>
             <th>الشركة</th>
+            <th>الإيميل</th>
             <th class="hide-mobile">الموقع</th>
-            <th>المنصة</th>
+            <th>المصدر</th>
             <th class="hide-mobile">التاريخ</th>
-            <th>فتح</th>
+            <th>إجراء</th>
           </tr>
         </thead>
         <tbody id="jobsBody"></tbody>
@@ -490,17 +543,19 @@
     </div>
 
     <div class="empty-state" id="emptyState" style="display:none;">
-      <div class="icon">&#128270;</div>
-      <h3>لا توجد نتائج</h3>
-      <p>جرّب تعديل مصطلحات البحث أو الفلاتر</p>
+      <div class="icon">&#9993;</div>
+      <h3>لا توجد وظائف بالإيميل حالياً</h3>
+      <p>جرّب تشغيل الفحص اليدوي أو تعديل الفلاتر</p>
     </div>
 
     <div class="pagination" id="pagination"></div>
   </div>
 
   <footer class="footer">
-    يتم تحديث البيانات تلقائياً كل 4 ساعات
+    يتم البحث تلقائياً كل 6 ساعات عن وظائف جديدة تقبل التقديم بالإيميل
   </footer>
+
+  <div class="toast" id="toast">تم نسخ الإيميل!</div>
 
   <script>
     const PER_PAGE = 50;
@@ -511,9 +566,7 @@
 
     // Elements
     const searchInput = document.getElementById('searchInput');
-    const platformFilter = document.getElementById('platformFilter');
     const countryFilter = document.getElementById('countryFilter');
-    const workModeFilter = document.getElementById('workModeFilter');
     const dateFilter = document.getElementById('dateFilter');
     const jobsBody = document.getElementById('jobsBody');
     const resultsCount = document.getElementById('resultsCount');
@@ -522,10 +575,19 @@
     const paginationEl = document.getElementById('pagination');
     const loadingBar = document.getElementById('loadingBar');
     const totalJobsEl = document.getElementById('totalJobs');
-    const platformCountEl = document.getElementById('platformCount');
+    const sourceCountEl = document.getElementById('sourceCount');
     const lastUpdateEl = document.getElementById('lastUpdate');
     const statusDot = document.getElementById('statusDot');
     const scanBtn = document.getElementById('scanBtn');
+    const toast = document.getElementById('toast');
+
+    // Copy to clipboard
+    function copyEmail(email) {
+      navigator.clipboard.writeText(email).then(() => {
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2000);
+      });
+    }
 
     // Fetch jobs
     async function fetchJobs() {
@@ -533,25 +595,21 @@
       try {
         const params = new URLSearchParams();
         const q = searchInput.value.trim();
-        const platform = platformFilter.value;
         const country = countryFilter.value;
-        const workMode = workModeFilter.value;
         const date = dateFilter.value;
 
         if (q) params.set('q', q);
-        if (platform !== 'all') params.set('platform', platform);
         if (country !== 'all') params.set('country', country);
-        if (workMode !== 'all') params.set('workMode', workMode);
         if (date) params.set('date', date);
 
-        const res = await fetch('/api/jobs?' + params.toString());
+        const res = await fetch('/api/email-jobs?' + params.toString());
         const data = await res.json();
         allJobs = data.jobs || [];
         filteredJobs = allJobs;
         currentPage = 1;
         renderJobs();
       } catch (e) {
-        console.error('Error fetching jobs:', e);
+        console.error('Error fetching email jobs:', e);
       }
       loadingBar.classList.remove('active');
     }
@@ -560,14 +618,14 @@
     async function fetchStatus() {
       try {
         const [statsRes, statusRes] = await Promise.all([
-          fetch('/api/stats'),
-          fetch('/api/status')
+          fetch('/api/email-jobs/stats'),
+          fetch('/api/email-jobs/status')
         ]);
         const stats = await statsRes.json();
         const status = await statusRes.json();
 
         totalJobsEl.textContent = stats.total.toLocaleString('ar-EG');
-        platformCountEl.textContent = stats.platforms || 6;
+        sourceCountEl.textContent = stats.sources || 3;
 
         if (stats.lastScan) {
           const d = new Date(stats.lastScan);
@@ -607,20 +665,33 @@
       resultsCount.textContent = `عرض ${start + 1}-${Math.min(end, filteredJobs.length)} من ${filteredJobs.length} وظيفة`;
 
       jobsBody.innerHTML = pageJobs.map(job => {
-        const platformClass = 'platform-' + (job.platform || 'unknown').toLowerCase();
+        const sourceClass = 'source-' + (job.source || 'unknown').toLowerCase();
         const dateStr = job.postedDate ? formatDate(job.postedDate) : '--';
-        const url = job.url || '#';
-        const title = escapeHtml(job.title || 'بدون عنوان');
-        const company = escapeHtml(job.company || 'غير معروف');
+        const email = escapeHtml(job.email || '');
+        const title = escapeHtml(job.title || 'وظيفة شاغرة');
+        const company = escapeHtml(job.company || 'غير محدد');
         const location = escapeHtml(job.location || '--');
+        const url = job.url ? escapeHtml(job.url) : '';
+        const mailtoSubject = encodeURIComponent(`التقديم على وظيفة: ${job.title || ''}`);
+        const mailtoBody = encodeURIComponent(`السلام عليكم،\n\nأود التقديم على وظيفة ${job.title || ''}.\n\nمرفق سيرتي الذاتية للاطلاع.\n\nشكراً لكم.`);
+
+        const titleHtml = url
+          ? `<a href="${url}" target="_blank" rel="noopener" class="job-title-link">${title}</a>`
+          : `<span class="job-title-link">${title}</span>`;
 
         return `<tr>
-          <td><a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="job-title-link">${title}</a></td>
+          <td>${titleHtml}</td>
           <td class="company-name">${company}</td>
+          <td class="email-text">${email}</td>
           <td class="location-text hide-mobile">${location}</td>
-          <td><span class="platform-badge ${platformClass}">${escapeHtml(job.platform || '?')}</span></td>
+          <td><span class="source-badge ${sourceClass}">${escapeHtml(job.source || '?')}</span></td>
           <td class="date-text hide-mobile">${dateStr}</td>
-          <td><a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="open-link" title="فتح">&#8599;</a></td>
+          <td>
+            <div class="actions-cell">
+              <a href="mailto:${email}?subject=${mailtoSubject}&body=${mailtoBody}" class="btn-mailto">&#9993; أرسل CV</a>
+              <button class="btn-copy" onclick="copyEmail('${email}')" title="نسخ الإيميل">&#128203;</button>
+            </div>
+          </td>
         </tr>`;
       }).join('');
 
@@ -682,7 +753,7 @@
     });
 
     // Filter change listeners
-    [platformFilter, countryFilter, workModeFilter, dateFilter].forEach(el => {
+    [countryFilter, dateFilter].forEach(el => {
       el.addEventListener('change', () => fetchJobs());
     });
 
@@ -692,7 +763,7 @@
         scanBtn.disabled = true;
         scanBtn.textContent = 'جاري الفحص...';
         statusDot.classList.add('scanning');
-        await fetch('/api/scan', { method: 'POST' });
+        await fetch('/api/email-jobs/scan', { method: 'POST' });
       } catch (e) {
         console.error('Scan error:', e);
       }
