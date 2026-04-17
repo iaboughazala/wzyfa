@@ -355,6 +355,15 @@ function cleanJobTitle(title) {
   // Junk titles that slipped through → fallback
   const junkTitles = ['hiring', 'we hiring', 'post', 'opportunity', 'vacancy', 'opening', 'job', 'now hiring'];
   if (junkTitles.includes(t.toLowerCase())) return 'the open position';
+  // Fragments of job descriptions embedded in title (not real titles)
+  const fragmentPatterns = [
+    /we\s+are\s+(?:looking|seeking|hiring)/i,
+    /looking\s+for\s+(?:a\s+)?(?:highly|passionate|dedicated|experienced|motivated)/i,
+    /seeking\s+(?:a\s+)?(?:highly|passionate|dedicated|experienced|motivated)/i,
+    /\bwe\s+need\s+/i,
+    /\bapply\s+(?:now|here|via)/i
+  ];
+  if (fragmentPatterns.some(re => re.test(t))) return 'the open position';
   // Fallback if everything got stripped or too short
   if (t.length < 4) return 'the open position';
   return t;
