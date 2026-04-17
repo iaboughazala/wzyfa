@@ -1472,6 +1472,91 @@ pause
   res.send(batScript);
 });
 
+// Raw PowerShell script (for piping via iwr | iex — bypasses Smart App Control)
+app.get('/api/send-cv/outlook-script-raw', (req, res) => {
+  // Reuse the same logic but return as plain text
+  const config = loadSmtpConfig() || {};
+  const cvPath = getCVPath();
+  if (!cvPath) return res.status(400).send('Write-Host "CV not uploaded. Upload first from wzyfa.finalizat.com" -ForegroundColor Red');
+
+  const jobs = loadEmailJobs();
+  const sent = loadSentEmails();
+  const sentKeys = new Set(sent.map(s => s.key));
+  const pending = jobs.filter(j => {
+    if (!j.email) return false;
+    const key = `${j.email}|||${(j.title || '').toLowerCase()}`;
+    return !sentKeys.has(key);
+  });
+
+  const subject = config.subject || 'Application for: {title}';
+  const body = config.body || 'Dear Hiring Manager,\n\nI am writing to express my interest in the {title} position at {company}.\n\nPlease find my CV attached for your review.\n\nBest regards';
+  const ps = (s) => String(s || '').replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
+
+  const jobsArray = pending.map(j => {
+    const s = subject.replace(/{title}/g, j.title || 'the open position').replace(/{company}/g, j.company || 'your company');
+    const b = body.replace(/{title}/g, j.title || 'the open position').replace(/{company}/g, j.company || 'your company').replace(/{email}/g, config.user || '');
+    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(j.title)}"; Company = "${ps(j.company)}"; Subject = "${ps(s)}"; Body = @"
+${b}
+"@ }`;
+  }).join(',' + '\n');
+
+  const host = req.get('host');
+  const protocol = req.protocol;
+  const cvUrl = `${protocol}://${host}/api/cv/download`;
+  const markSentUrl = `${protocol}://${host}/api/send-cv/mark-sent`;
+
+  const script = `$ErrorActionPreference = "Continue"
+Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  Wzyfa - Outlook Auto-Send CV" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan ; Write-Host ""
+
+$CvPath = "$env:TEMP\\wzyfa-cv-$(Get-Random)${path.extname(cvPath)}"
+Write-Host "Downloading CV..." -ForegroundColor Yellow
+try { Invoke-WebRequest -Uri "${cvUrl}" -OutFile $CvPath -UseBasicParsing ; Write-Host "CV ready: $CvPath" -ForegroundColor Green }
+catch { Write-Host "ERROR downloading CV: $_" -ForegroundColor Red ; return }
+
+Write-Host "Connecting to Outlook..." -ForegroundColor Yellow
+try { $Outlook = New-Object -ComObject Outlook.Application ; Write-Host "Outlook connected!" -ForegroundColor Green }
+catch { Write-Host "ERROR: Outlook not available. $_" -ForegroundColor Red ; return }
+
+$Jobs = @(
+${jobsArray}
+)
+
+Write-Host "" ; Write-Host "Total jobs: $($Jobs.Count)" -ForegroundColor Cyan
+$Confirm = Read-Host "Press Enter to start, 'n' to cancel"
+if ($Confirm -eq 'n') { return }
+
+$Sent = 0 ; $Failed = 0 ; $DelaySeconds = 20
+foreach ($Job in $Jobs) {
+    $Index = $Sent + $Failed + 1
+    Write-Host "" ; Write-Host "[$Index/$($Jobs.Count)] $($Job.Email)" -ForegroundColor Yellow
+    Write-Host "  $($Job.Title) @ $($Job.Company)" -ForegroundColor Gray
+    try {
+        $Mail = $Outlook.CreateItem(0)
+        $Mail.To = $Job.Email
+        $Mail.Subject = $Job.Subject
+        $Mail.Body = $Job.Body
+        if (Test-Path $CvPath) { $null = $Mail.Attachments.Add($CvPath) }
+        $Mail.Send()
+        Write-Host "  [OK] Sent" -ForegroundColor Green
+        $Sent++
+        try {
+            $payload = @{ email = $Job.Email; title = $Job.Title; company = $Job.Company } | ConvertTo-Json
+            Invoke-RestMethod -Uri "${markSentUrl}" -Method Post -Body $payload -ContentType "application/json" -TimeoutSec 5 | Out-Null
+        } catch { }
+    } catch { Write-Host "  [FAIL] $_" -ForegroundColor Red ; $Failed++ }
+    if ($Index -lt $Jobs.Count) { Start-Sleep -Seconds $DelaySeconds }
+}
+
+Write-Host "" ; Write-Host "Complete! Sent: $Sent | Failed: $Failed" -ForegroundColor Cyan
+Remove-Item $CvPath -ErrorAction SilentlyContinue
+`;
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(script);
+});
+
 // Mark email as sent (called by PowerShell script)
 app.post('/api/send-cv/mark-sent', (req, res) => {
   const { email, title, company } = req.body;

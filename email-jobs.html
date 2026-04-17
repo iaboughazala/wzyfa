@@ -670,8 +670,8 @@
       </div>
       <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
         <span class="bulk-info" id="sentCount"></span>
-        <button class="btn" id="outlookBtn" onclick="downloadOutlookScript()" style="background:#0078d4;" title="تحميل سكريبت يرسل تلقائي من Outlook Desktop">
-          &#128228; تحميل سكريبت Outlook
+        <button class="btn" id="outlookBtn" onclick="downloadOutlookScript()" style="background:#0078d4;" title="إرسال تلقائي من Outlook Desktop عبر PowerShell">
+          &#128231; أرسل من Outlook Desktop
         </button>
         <button class="btn btn-success" id="bulkSendBtn" onclick="bulkSend()">&#9654; أرسل SMTP</button>
       </div>
@@ -682,26 +682,36 @@
       <div class="settings-panel">
         <h2>&#128231; إرسال من Outlook Desktop</h2>
         <div style="color:var(--text); line-height:1.9; font-size:0.9rem;">
-          <p style="color:var(--green); margin-bottom:1rem;">&#10004; السكريبت تم تحميله!</p>
-          <h3>خطوات الاستخدام:</h3>
+          <p style="color:var(--green); margin-bottom:1rem;">&#10004; الطريقة التالية تتجاوز Smart App Control و Windows Defender</p>
+
+          <h3>الطريقة المباشرة (موصى بها):</h3>
           <ol style="padding-right:1.5rem; color:var(--text-muted);">
-            <li>تأكد إن <strong style="color:var(--text)">Outlook Desktop</strong> مفتوح ومسجل دخول</li>
-            <li>افتح مجلد Downloads</li>
-            <li><strong style="color:var(--text)">دبل كليك</strong> على ملف <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">wzyfa-outlook-send.cmd</code></li>
-            <li>لو ظهرت رسالة <strong>"Windows protected your PC"</strong>:
+            <li>افتح <strong style="color:var(--text)">PowerShell</strong>:
               <ul style="padding-right:1.5rem; margin-top:0.3rem;">
-                <li>اضغط على <strong style="color:var(--text)">More info</strong></li>
-                <li>اضغط على <strong style="color:var(--text)">Run anyway</strong></li>
+                <li>اضغط <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">Win + R</code></li>
+                <li>اكتب <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">powershell</code> واضغط Enter</li>
               </ul>
             </li>
-            <li>اضغط Enter لبدء الإرسال</li>
+            <li>انسخ الأمر التالي والصقه في PowerShell:</li>
           </ol>
-          <div style="background:rgba(59,130,246,0.1); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin-top:1rem;">
-            <strong style="color:var(--accent);">ملاحظات:</strong>
-            <ul style="padding-right:1.5rem; margin-top:0.5rem; color:var(--text-muted);">
-              <li>الإرسال يتم كل 20 ثانية لتجنب فلاتر الـ spam</li>
-              <li>CV يتم تحميله من السيرفر تلقائياً</li>
-              <li>الـ CMD file يتجاوز مشكلة Execution Policy تلقائياً</li>
+
+          <div style="background:var(--bg-input); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin:0.75rem 0; position:relative;">
+            <code id="psCommand" style="font-size:0.78rem; color:var(--cyan); direction:ltr; display:block; word-break:break-all; font-family:'JetBrains Mono',monospace; padding-left:3rem;">iwr <span id="scriptUrl"></span> -UseBasicParsing | iex</code>
+            <button onclick="copyPsCommand()" class="btn-copy" style="position:absolute; top:0.5rem; left:0.5rem; padding:0.3rem 0.6rem;" title="نسخ">&#128203; نسخ</button>
+          </div>
+
+          <ol start="3" style="padding-right:1.5rem; color:var(--text-muted);">
+            <li>اضغط Enter لتنفيذ الأمر</li>
+            <li>تأكد إن <strong style="color:var(--text)">Outlook Desktop</strong> مفتوح ومسجل دخول</li>
+            <li>اضغط Enter مرة أخرى لبدء الإرسال</li>
+          </ol>
+
+          <div style="background:rgba(34,197,94,0.1); border:1px solid var(--green); padding:0.75rem; border-radius:8px; margin-top:1rem;">
+            <strong style="color:var(--green);">&#10004; لماذا هذه الطريقة تعمل؟</strong>
+            <ul style="padding-right:1.5rem; margin-top:0.5rem; color:var(--text-muted); font-size:0.82rem;">
+              <li>السكريبت يعمل في الذاكرة مباشرة بدون تحميل ملف</li>
+              <li>Smart App Control لا يعترض على الأوامر اللي تكتبها بنفسك</li>
+              <li>الإرسال كل 20 ثانية لتجنب فلاتر الـ spam</li>
             </ul>
           </div>
         </div>
@@ -1120,18 +1130,20 @@ Best regards,
         return;
       }
 
-      // Trigger download
-      const link = document.createElement('a');
-      link.href = '/api/send-cv/outlook-script';
-      link.download = 'wzyfa-outlook-send.cmd';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Set the URL for the copy-paste command
+      const rawUrl = window.location.origin + '/api/send-cv/outlook-script-raw';
+      document.getElementById('scriptUrl').textContent = rawUrl;
 
-      // Show instructions
-      setTimeout(() => {
-        document.getElementById('outlookOverlay').classList.add('show');
-      }, 500);
+      // Show instructions modal
+      document.getElementById('outlookOverlay').classList.add('show');
+    }
+
+    function copyPsCommand() {
+      const url = window.location.origin + '/api/send-cv/outlook-script-raw';
+      const cmd = `iwr ${url} -UseBasicParsing | iex`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast('تم نسخ الأمر! الصقه في PowerShell');
+      });
     }
 
     async function loadSentHistory() {
