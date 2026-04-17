@@ -340,14 +340,23 @@ function cleanJobTitle(title) {
   t = t.replace(/\s+in\s+(?:riyadh|jeddah|dubai|saudi(?:\s+arabia)?|ksa|uae|qatar|dammam|bahrain|kuwait|oman|egypt|jordan)\b.*$/i, '');
   // Remove opening dash/dot/colon/whitespace junk
   t = t.replace(/^[\s:\-.|،,]+/, '').replace(/[\s:\-.|،,]+$/, '');
+  // Remove unclosed parentheses at end (e.g., "Senior PM (Riyadh")
+  if ((t.match(/\(/g) || []).length > (t.match(/\)/g) || []).length) {
+    t = t.replace(/\s*\([^)]*$/, '');
+  }
+  // Remove trailing "(" or dangling punctuation
+  t = t.replace(/\s*[\(\[\{\s\-–—:|،,.]+$/, '');
   // Collapse multiple spaces
   t = t.replace(/\s+/g, ' ').trim();
   // Truncate if way too long
   if (t.length > 80) {
     t = t.slice(0, 77).replace(/\s\S*$/, '') + '...';
   }
-  // Fallback if everything got stripped
-  if (t.length < 3) return 'the open position';
+  // Junk titles that slipped through → fallback
+  const junkTitles = ['hiring', 'we hiring', 'post', 'opportunity', 'vacancy', 'opening', 'job', 'now hiring'];
+  if (junkTitles.includes(t.toLowerCase())) return 'the open position';
+  // Fallback if everything got stripped or too short
+  if (t.length < 4) return 'the open position';
   return t;
 }
 
