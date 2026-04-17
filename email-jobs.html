@@ -752,11 +752,15 @@
         <label>مزود البريد</label>
         <select id="smtpPreset" onchange="applySmtpPreset()">
           <option value="">-- اختر أو أدخل يدوياً --</option>
-          <option value="gmail">Gmail</option>
-          <option value="outlook">Outlook / Hotmail</option>
+          <option value="gmail">Gmail (الأفضل - يتطلب App Password)</option>
+          <option value="brevo">Brevo / Sendinblue (300 إيميل/يوم مجاناً)</option>
+          <option value="sendgrid">SendGrid</option>
+          <option value="mailgun">Mailgun</option>
           <option value="yahoo">Yahoo</option>
+          <option value="outlook">Outlook / Hotmail (⚠ معطل حالياً من Microsoft)</option>
           <option value="custom">إعداد يدوي</option>
         </select>
+        <div class="cv-info" id="presetHint" style="margin-top:0.3rem;"></div>
       </div>
       <div class="form-group">
         <label>SMTP Host</label>
@@ -863,7 +867,23 @@ Best regards,
       const preset = document.getElementById('smtpPreset').value;
       const hostEl = document.getElementById('smtpHost');
       const portEl = document.getElementById('smtpPort');
+      const hint = document.getElementById('presetHint');
+      const hints = {
+        gmail: '⚠ يتطلب App Password: فعّل 2FA ثم myaccount.google.com/apppasswords',
+        brevo: 'سجّل على brevo.com → SMTP & API → Generate SMTP key. اليوزر = الإيميل، الباسورد = المفتاح',
+        sendgrid: 'اليوزر: apikey ثابت، الباسورد: API Key من sendgrid.com',
+        mailgun: 'استخدم SMTP credentials من mailgun.com dashboard',
+        yahoo: 'يتطلب App Password من Yahoo Account Security',
+        outlook: '❌ معطل من Microsoft منذ 2022. استخدم Gmail أو Brevo بدلاً منه',
+        custom: 'أدخل بيانات SMTP الخاصة بمزودك'
+      };
+      hint.textContent = hints[preset] || '';
+      hint.style.color = (preset === 'outlook') ? 'var(--red)' : 'var(--text-muted)';
+
       if (preset === 'gmail') { hostEl.value = 'smtp.gmail.com'; portEl.value = 587; }
+      else if (preset === 'brevo') { hostEl.value = 'smtp-relay.brevo.com'; portEl.value = 587; }
+      else if (preset === 'sendgrid') { hostEl.value = 'smtp.sendgrid.net'; portEl.value = 587; }
+      else if (preset === 'mailgun') { hostEl.value = 'smtp.mailgun.org'; portEl.value = 587; }
       else if (preset === 'outlook') { hostEl.value = 'smtp-mail.outlook.com'; portEl.value = 587; }
       else if (preset === 'yahoo') { hostEl.value = 'smtp.mail.yahoo.com'; portEl.value = 587; }
     }
