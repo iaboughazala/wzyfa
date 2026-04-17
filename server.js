@@ -1406,7 +1406,7 @@ Best regards`;
   // Escape PowerShell strings
   const ps = (s) => String(s || '').replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
 
-  // Build the PowerShell script
+  // Build the PowerShell script — encode bodies as Base64 to avoid escaping issues
   const jobsArray = pending.map(j => {
     const ct = cleanJobTitle(j.title) || 'the open position';
     const cc = cleanCompanyName(j.company) || 'your organization';
@@ -1415,9 +1415,8 @@ Best regards`;
       .replace(/{title}/g, ct)
       .replace(/{company}/g, cc)
       .replace(/{email}/g, config.user || '');
-    return `    @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(personalizedSubject)}"; Body = @"
-${personalizedBody}
-"@ }`;
+    const bodyB64 = Buffer.from(personalizedBody, 'utf8').toString('base64');
+    return `    @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(personalizedSubject)}"; BodyB64 = "${bodyB64}" }`;
   }).join(',' + '\n');
 
   // Host for CV download
@@ -1494,7 +1493,7 @@ foreach ($Job in $Jobs) {
         $Mail = $Outlook.CreateItem(0)  # 0 = olMailItem
         $Mail.To = $Job.Email
         $Mail.Subject = $Job.Subject
-        $Mail.Body = $Job.Body
+        $Mail.Body = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Job.BodyB64))
         if (Test-Path $CvPath) {
             $null = $Mail.Attachments.Add($CvPath)
         }
@@ -1586,15 +1585,18 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
   const ps = (s) => String(s || '').replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
 
   const isTestMode = !!req.query.test;
+  // Encode bodies as Base64 to avoid PowerShell escaping issues with special chars
   const jobsArray = pending.map(j => {
     const ct = cleanJobTitle(j.title) || 'the open position';
     const cc = cleanCompanyName(j.company) || 'your organization';
     const s = subject.replace(/{title}/g, ct).replace(/{company}/g, cc);
-    const b = body.replace(/{title}/g, ct).replace(/{company}/g, cc).replace(/{email}/g, config.user || '');
+    let b = body.replace(/{title}/g, ct).replace(/{company}/g, cc).replace(/{email}/g, config.user || '');
+    if (isTestMode) {
+      b = `>>> This is a TEST email. In production it would go to: ${pending[0]?._originalEmail || '?'}\n\n` + b;
+    }
+    const bodyB64 = Buffer.from(b, 'utf8').toString('base64');
     const testPrefix = isTestMode ? '[TEST] ' : '';
-    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(testPrefix + s)}"; Body = @"
-${isTestMode ? '>>> This is a TEST email. In production it would go to: ' + (pending[0]?._originalEmail || '?') + '\n\n' : ''}${b}
-"@ }`;
+    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(testPrefix + s)}"; BodyB64 = "${bodyB64}" }`;
   }).join(',' + '\n');
 
   const host = req.get('host');
@@ -1640,7 +1642,7 @@ foreach ($Job in $Jobs) {
         $Mail = $Outlook.CreateItem(0)
         $Mail.To = $Job.Email
         $Mail.Subject = $Job.Subject
-        $Mail.Body = $Job.Body
+        $Mail.Body = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Job.BodyB64))
         if (Test-Path $CvPath) { $null = $Mail.Attachments.Add($CvPath) }
         $Mail.Send()
         Write-Host "  [OK] Sent" -ForegroundColor Green
