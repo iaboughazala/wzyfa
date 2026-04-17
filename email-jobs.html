@@ -705,7 +705,7 @@
           </ol>
 
           <div style="background:var(--bg-input); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin:0.75rem 0; position:relative;">
-            <code id="psCommand" style="font-size:0.78rem; color:var(--cyan); direction:ltr; display:block; word-break:break-all; font-family:'JetBrains Mono',monospace; padding-left:3rem;">iwr <span id="scriptUrl"></span> -UseBasicParsing | iex</code>
+            <code id="psCommand" style="font-size:0.75rem; color:var(--cyan); direction:ltr; display:block; word-break:break-all; font-family:'JetBrains Mono',monospace; padding-left:3rem;">$c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('<span id="scriptUrl"></span>')</code>
             <button onclick="copyPsCommand()" class="btn-copy" style="position:absolute; top:0.5rem; left:0.5rem; padding:0.3rem 0.6rem;" title="نسخ">&#128203; نسخ</button>
           </div>
 
@@ -1170,9 +1170,15 @@ Best regards,
       document.getElementById('outlookOverlay').classList.add('show');
     }
 
+    function buildPsCommand(url) {
+      // Use WebClient with UTF-8 encoding to correctly handle Arabic characters
+      // iwr in Windows PowerShell 5.1 mis-decodes UTF-8, so we force it here
+      return `$c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('${url}')`;
+    }
+
     function copyPsCommand() {
       const url = window.location.origin + '/api/send-cv/outlook-script-raw';
-      const cmd = `iwr ${url} -UseBasicParsing | iex`;
+      const cmd = buildPsCommand(url);
       navigator.clipboard.writeText(cmd).then(() => {
         showToast('تم نسخ الأمر! الصقه في PowerShell');
       });
@@ -1185,7 +1191,7 @@ Best regards,
         return;
       }
       const url = window.location.origin + '/api/send-cv/outlook-script-raw?test=' + encodeURIComponent(testEmail);
-      const cmd = `iwr '${url}' -UseBasicParsing | iex`;
+      const cmd = buildPsCommand(url);
       navigator.clipboard.writeText(cmd).then(() => {
         showToast('تم نسخ أمر الاختبار! الصقه في PowerShell');
       });

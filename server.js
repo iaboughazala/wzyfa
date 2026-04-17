@@ -1537,6 +1537,9 @@ ${isTestMode ? '>>> This is a TEST email. In production it would go to: ' + (pen
   const attachmentFilename = getAttachmentFilename();
 
   const script = `$ErrorActionPreference = "Continue"
+# Fix Arabic encoding for console and outgoing data
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Wzyfa - Outlook Auto-Send CV" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan ; Write-Host ""
@@ -1589,6 +1592,24 @@ Remove-Item $CvFolder -Recurse -Force -ErrorAction SilentlyContinue
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(script);
+});
+
+// Unmark email as sent (useful after accidental send or if test went to wrong address)
+app.post('/api/send-cv/unmark-sent', (req, res) => {
+  const { email, title } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  let sent = loadSentEmails();
+  const key = `${email}|||${(title || '').toLowerCase()}`;
+  const before = sent.length;
+  sent = sent.filter(s => s.key !== key);
+  saveSentEmails(sent);
+  res.json({ removed: before - sent.length, remaining: sent.length });
+});
+
+// Clear all sent history
+app.post('/api/send-cv/clear-sent', (req, res) => {
+  saveSentEmails([]);
+  res.json({ message: 'Sent history cleared' });
 });
 
 // Mark email as sent (called by PowerShell script)
