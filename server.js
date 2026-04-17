@@ -1478,11 +1478,14 @@ Best regards`;
     return `    @{ Email = '${ps(j.email)}'; Title = '${ps(ct)}'; Company = '${ps(cc)}'; Subject = '${ps(personalizedSubject)}'; BodyB64 = '${bodyB64}' }`;
   }).join(',' + '\n');
 
-  // Host for CV download
-  const host = req.get('host');
-  const protocol = req.protocol;
-  const cvUrl = `${protocol}://${host}/api/cv/download`;
-  const markSentUrl = `${protocol}://${host}/api/send-cv/mark-sent`;
+  // Host for CV download — use public host from X-Forwarded-* headers
+  // when behind a reverse proxy, so scripts downloaded by remote users
+  // hit the public URL, not container-internal localhost:3000
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const protocol = req.get('x-forwarded-proto') || req.protocol;
+  const publicBase = process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+  const cvUrl = `${publicBase}/api/cv/download`;
+  const markSentUrl = `${publicBase}/api/send-cv/mark-sent`;
   const attachmentFilename = getAttachmentFilename();
 
   const script = `# ============================================
@@ -1662,10 +1665,11 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
     return `  @{ Email = '${ps(j.email)}'; Title = '${ps(ct)}'; Company = '${ps(cc)}'; Subject = '${ps(testPrefix + s)}'; BodyB64 = '${bodyB64}' }`;
   }).join(',' + '\n');
 
-  const host = req.get('host');
-  const protocol = req.protocol;
-  const cvUrl = `${protocol}://${host}/api/cv/download`;
-  const markSentUrl = isTestMode ? '' : `${protocol}://${host}/api/send-cv/mark-sent`;
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const protocol = req.get('x-forwarded-proto') || req.protocol;
+  const publicBase = process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+  const cvUrl = `${publicBase}/api/cv/download`;
+  const markSentUrl = isTestMode ? '' : `${publicBase}/api/send-cv/mark-sent`;
   const attachmentFilename = getAttachmentFilename();
 
   const sentToday = countSentToday();
