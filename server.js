@@ -318,10 +318,14 @@ function cleanJobTitle(title) {
     /^open\s+position[:\s\-—–|]*/i,
     /^opportunity[:\s\-—–|]+/i,
     /^urgent[:\s\-—–|]+/i,
-    /^looking\s+for[:\s\-—–|]+/i,
+    /^we\s+are\s+(?:currently\s+)?(?:looking\s+for|seeking|hiring)\s+(?:a\s+|an\s+|for\s+)?/i,
+    /^(?:currently\s+)?looking\s+for\s+(?:a\s+|an\s+)?/i,
+    /^seeking\s+(?:a\s+|an\s+)?/i,
+    /^join\s+(?:our\s+team\s+as\s+(?:a\s+|an\s+)?)?/i,
     /^مطلوب[:\s\-—–|]+/i,
     /^وظيفة(?:\s+شاغرة)?[:\s\-—–|]+/i,
-    /^فرصة(?:\s+عمل)?[:\s\-—–|]+/i
+    /^فرصة(?:\s+عمل)?[:\s\-—–|]+/i,
+    /^نبحث\s+عن[:\s\-—–|]+/i
   ];
   for (const re of prefixes) t = t.replace(re, '');
   // Remove suffixes commonly added to social posts
@@ -332,6 +336,8 @@ function cleanJobTitle(title) {
   t = t.replace(/^send\s+your\s+cv\s+to\s+\S+\s*[\-—–|:]*\s*/i, '');
   // Remove location trailers
   t = t.replace(/\s*[-–—]\s*(?:riyadh|jeddah|dubai|saudi arabia|ksa|uae|qatar|remote|on[-\s]?site|hybrid)\s*.*$/i, '');
+  // Remove " in Location" suffix (e.g., "Head of Projects in Riyadh, Saudi")
+  t = t.replace(/\s+in\s+(?:riyadh|jeddah|dubai|saudi(?:\s+arabia)?|ksa|uae|qatar|dammam|bahrain|kuwait|oman|egypt|jordan)\b.*$/i, '');
   // Remove opening dash/dot/colon/whitespace junk
   t = t.replace(/^[\s:\-.|،,]+/, '').replace(/[\s:\-.|،,]+$/, '');
   // Collapse multiple spaces
@@ -353,7 +359,10 @@ function cleanCompanyName(company) {
   c = c.replace(/['']s\s+post\s*$/i, '');
   c = c.replace(/^[\s:\-.|،,]+/, '').replace(/[\s:\-.|،,]+$/, '');
   c = c.replace(/\s+/g, ' ').trim();
-  if (c.length < 2 || /^unknown$/i.test(c)) return 'your organization';
+  // Arabic fallbacks → English "your organization"
+  const arabicPlaceholders = ['غير محدد', 'غير معروف', 'غير معلوم', 'شركة', 'مؤسسة'];
+  if (!c || arabicPlaceholders.includes(c)) return 'your organization';
+  if (c.length < 2 || /^unknown$/i.test(c) || /^n\/a$/i.test(c)) return 'your organization';
   return c;
 }
 
