@@ -684,6 +684,12 @@
       <span class="stat-value" id="pendingCount" style="color: var(--orange);">0</span>
       <span class="stat-label">متاحة</span>
     </div>
+    <div class="stat-item" title="الحد اليومي لحماية حسابك من الحظر" style="border: 1px solid var(--purple); padding: 0.25rem 0.75rem; border-radius: 6px;">
+      <span class="stat-value" id="dailyUsed" style="color: var(--purple);">0</span>
+      <span class="stat-label">/</span>
+      <span class="stat-value" id="dailyLimit" style="color: var(--purple);">20</span>
+      <span class="stat-label">اليوم</span>
+    </div>
     <div class="stat-item">
       <span class="stat-label">آخر تحديث:</span>
       <span class="stat-value mono" id="lastUpdate" style="font-size: 0.85rem;">--</span>
@@ -737,6 +743,17 @@
             </li>
             <li>انسخ الأمر التالي والصقه في PowerShell:</li>
           </ol>
+
+          <div id="dailyStatusBox" style="background:rgba(168,85,247,0.08); border:1px solid var(--purple); padding:0.75rem; border-radius:8px; margin:0.75rem 0;">
+            <div style="color:var(--purple); font-weight:600; font-size:0.95rem;">&#128197; الحد اليومي الآمن</div>
+            <div style="color:var(--text-muted); font-size:0.82rem; margin-top:0.3rem;">
+              تم إرسال <strong id="dailyStatusSent" style="color:var(--text)">0</strong> من أصل <strong style="color:var(--text)">20</strong> اليوم.
+              <strong id="dailyStatusRemaining" style="color:var(--green)">20</strong> متاحة حالياً.
+            </div>
+            <div style="color:var(--text-dim); font-size:0.75rem; margin-top:0.3rem;">
+              الحد محدد بـ 20/يوم لحماية حساب Outlook من الحظر. العداد يتصفر تلقائياً بعد 24 ساعة من أول إرسال.
+            </div>
+          </div>
 
           <div style="background:var(--bg-input); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin:0.75rem 0; position:relative;">
             <code id="psCommand" style="font-size:0.75rem; color:var(--cyan); direction:ltr; display:block; word-break:break-all; font-family:'JetBrains Mono',monospace; padding-left:3rem;">$c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('<span id="scriptUrl"></span>')</code>
@@ -1201,6 +1218,15 @@ Best regards,
       // Load message preview
       loadMessagePreview();
 
+      // Load daily status into modal
+      try {
+        const ds = await (await fetch('/api/send-cv/daily-status')).json();
+        document.getElementById('dailyStatusSent').textContent = ds.sentToday;
+        const remEl = document.getElementById('dailyStatusRemaining');
+        remEl.textContent = ds.remaining;
+        remEl.style.color = ds.remaining === 0 ? 'var(--red)' : ds.remaining < 5 ? 'var(--orange)' : 'var(--green)';
+      } catch (e) {}
+
       // Show instructions modal
       document.getElementById('outlookOverlay').classList.add('show');
     }
@@ -1288,6 +1314,25 @@ Best regards,
         const data = await res.json();
         sentEmailKeys = new Set(data.sent.map(s => s.key));
         updateBulkBar();
+      } catch (e) {}
+      // Also load daily status
+      loadDailyStatus();
+    }
+
+    async function loadDailyStatus() {
+      try {
+        const res = await fetch('/api/send-cv/daily-status');
+        const data = await res.json();
+        const used = document.getElementById('dailyUsed');
+        const limit = document.getElementById('dailyLimit');
+        if (used) used.textContent = data.sentToday.toLocaleString('ar-EG');
+        if (limit) limit.textContent = data.dailyLimit.toLocaleString('ar-EG');
+        // Color code based on usage
+        if (used) {
+          if (data.remaining === 0) used.style.color = 'var(--red)';
+          else if (data.sentToday >= data.dailyLimit * 0.75) used.style.color = 'var(--orange)';
+          else used.style.color = 'var(--purple)';
+        }
       } catch (e) {}
     }
 

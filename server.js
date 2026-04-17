@@ -77,6 +77,22 @@ function getCVPath() {
 }
 
 // Build attachment filename from sender name
+const DAILY_LIMIT = 20;
+
+// Count emails sent in the last 24 hours
+function countSentToday() {
+  const sent = loadSentEmails();
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  return sent.filter(s => {
+    const t = new Date(s.sentAt || 0).getTime();
+    return t >= cutoff;
+  }).length;
+}
+
+function getDailyRemaining() {
+  return Math.max(0, DAILY_LIMIT - countSentToday());
+}
+
 function getAttachmentFilename() {
   const config = loadSmtpConfig() || {};
   const cvPath = getCVPath();
@@ -1398,6 +1414,21 @@ app.get('/api/send-cv/history', (req, res) => {
   res.json({ total: sent.length, sent });
 });
 
+// Daily limit status
+app.get('/api/send-cv/daily-status', (req, res) => {
+  const sent = loadSentEmails();
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const sentTodayList = sent.filter(s => new Date(s.sentAt || 0).getTime() >= cutoff);
+  res.json({
+    dailyLimit: DAILY_LIMIT,
+    sentToday: sentTodayList.length,
+    remaining: getDailyRemaining(),
+    resetsAt: sentTodayList.length > 0 ?
+      new Date(Math.min(...sentTodayList.map(s => new Date(s.sentAt).getTime())) + 24 * 60 * 60 * 1000).toISOString() :
+      null
+  });
+});
+
 // Download CV directly (uses sender name for filename)
 app.get('/api/cv/download', (req, res) => {
   const cvPath = getCVPath();
@@ -1599,13 +1630,16 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
   });
 
   // Test mode: ?test=EMAIL sends to user's own email (first job's content)
-  // Limit mode: ?limit=N sends to only the first N jobs
+  // Limit mode: ?limit=N sends to only the first N jobs (capped by daily remaining)
+  // Default: respects DAILY_LIMIT (20/day)
   if (req.query.test) {
     const testEmail = String(req.query.test);
     pending = pending.slice(0, 1).map(j => ({ ...j, _originalEmail: j.email, email: testEmail, _isTest: true }));
-  } else if (req.query.limit) {
-    const n = Math.max(1, parseInt(req.query.limit) || 1);
-    pending = pending.slice(0, n);
+  } else {
+    const remaining = getDailyRemaining();
+    const requestedLimit = req.query.limit ? Math.max(1, parseInt(req.query.limit) || 1) : remaining;
+    const actualLimit = Math.min(requestedLimit, remaining);
+    pending = pending.slice(0, actualLimit);
   }
 
   const subject = config.subject || 'Application for: {title}';
@@ -1634,12 +1668,16 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
   const markSentUrl = isTestMode ? '' : `${protocol}://${host}/api/send-cv/mark-sent`;
   const attachmentFilename = getAttachmentFilename();
 
+  const sentToday = countSentToday();
+  const dailyRemaining = getDailyRemaining();
   const script = `$ErrorActionPreference = "Continue"
 # Fix Arabic encoding for console and outgoing data
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Wzyfa - Outlook Auto-Send CV" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  Daily limit: ${DAILY_LIMIT} | Already sent today: ${sentToday} | Remaining: ${dailyRemaining}" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Cyan ; Write-Host ""
 
 # Save CV with personalized name so it appears as "${ps(attachmentFilename)}" in the email
