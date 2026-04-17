@@ -303,6 +303,32 @@
     .source-twitter { background: rgba(6,182,212,0.15); color: #06b6d4; }
     .source-bayt { background: rgba(34,197,94,0.15); color: #22c55e; }
 
+    .status-badge {
+      display: inline-block;
+      padding: 0.25rem 0.6rem;
+      border-radius: 9999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      font-family: 'IBM Plex Sans Arabic', sans-serif;
+      white-space: nowrap;
+    }
+    .status-badge.applied {
+      background: rgba(34,197,94,0.15);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.3);
+    }
+    .status-badge.pending {
+      background: rgba(245,158,11,0.1);
+      color: var(--orange);
+      border: 1px solid rgba(245,158,11,0.3);
+    }
+    tr.row-applied {
+      opacity: 0.55;
+    }
+    tr.row-applied:hover {
+      opacity: 0.85;
+    }
+
     .date-text { color: var(--text-dim); font-size: 0.8rem; font-family: 'JetBrains Mono', monospace; }
 
     /* Action buttons */
@@ -647,8 +673,16 @@
       <span class="stat-label">وظيفة بالإيميل</span>
     </div>
     <div class="stat-item">
-      <span class="stat-value" id="sourceCount">3</span>
+      <span class="stat-value" id="sourceCount" style="color: var(--cyan);">3</span>
       <span class="stat-label">مصادر</span>
+    </div>
+    <div class="stat-item" title="عدد الوظائف اللي تم التقديم عليها بإرسال CV">
+      <span class="stat-value" id="appliedCount" style="color: var(--green);">0</span>
+      <span class="stat-label">تم التقديم</span>
+    </div>
+    <div class="stat-item" title="الوظائف اللي لسه محتاجة تقديم">
+      <span class="stat-value" id="pendingCount" style="color: var(--orange);">0</span>
+      <span class="stat-label">متاحة</span>
     </div>
     <div class="stat-item">
       <span class="stat-label">آخر تحديث:</span>
@@ -775,6 +809,7 @@
       <table class="jobs-table">
         <thead>
           <tr>
+            <th>الحالة</th>
             <th>المسمى الوظيفي</th>
             <th>الشركة</th>
             <th>الإيميل</th>
@@ -1259,6 +1294,21 @@ Best regards,
     function updateBulkBar() {
       const info = document.getElementById('sentCount');
       info.textContent = sentEmailKeys.size > 0 ? `تم إرسال ${sentEmailKeys.size} سابقاً` : '';
+
+      // Update stats counters
+      const appliedEl = document.getElementById('appliedCount');
+      const pendingEl = document.getElementById('pendingCount');
+      if (appliedEl) appliedEl.textContent = sentEmailKeys.size.toLocaleString('ar-EG');
+      if (pendingEl) {
+        // Count jobs not yet applied to (based on currently loaded filteredJobs and sent history)
+        let pending = 0;
+        for (const job of filteredJobs) {
+          const key = `${(job.email||'').toLowerCase().trim()}|||${(job.title||'').toLowerCase().trim()}`;
+          if (!sentEmailKeys.has(key)) pending++;
+        }
+        pendingEl.textContent = pending.toLocaleString('ar-EG');
+      }
+
       const btn = document.getElementById('bulkSendBtn');
       if (!smtpReady || !cvReady) {
         btn.textContent = '\u2699 أعدّ الإعدادات أولاً';
@@ -1359,13 +1409,18 @@ Best regards,
 
         const sentKey = `${(job.email||'').toLowerCase().trim()}|||${(job.title||'').toLowerCase().trim()}`;
         const isSent = sentEmailKeys.has(sentKey);
+        const statusBadge = isSent
+          ? `<span class="status-badge applied" title="تم إرسال CV لهذه الوظيفة">&#10004; تم التقديم</span>`
+          : `<span class="status-badge pending" title="لم يتم التقديم بعد">&#9651; متاحة</span>`;
         const sendBtnHtml = isSent
           ? `<button class="btn-send-single sent" disabled>تم الإرسال</button>`
           : (smtpReady && cvReady)
             ? `<button class="btn-send-single" onclick="sendSingle('${email}','${title.replace(/'/g,"\\'")}','${company.replace(/'/g,"\\'")}',this)">&#9654; أرسل</button>`
             : '';
+        const rowClass = isSent ? 'row-applied' : '';
 
-        return `<tr>
+        return `<tr class="${rowClass}">
+          <td>${statusBadge}</td>
           <td>${titleHtml}</td>
           <td class="company-name">${company}</td>
           <td class="email-text">${email}</td>
@@ -1383,6 +1438,7 @@ Best regards,
       }).join('');
 
       renderPagination();
+      updateBulkBar();
     }
 
     // Pagination
