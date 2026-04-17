@@ -128,14 +128,19 @@ async function processEmailQueue() {
       continue;
     }
 
+    const cleanTitle = cleanJobTitle(job.title) || 'the open position';
+    const cleanCompany = cleanCompanyName(job.company) || 'your organization';
+
     try {
       const mailOptions = {
         from: `${smtpConfig.senderName || smtpConfig.user} <${smtpConfig.user}>`,
         to: job.email,
-        subject: smtpConfig.subject || `Application: ${job.title}`,
+        subject: (smtpConfig.subject || 'Application – {title}')
+          .replace(/{title}/g, cleanTitle)
+          .replace(/{company}/g, cleanCompany),
         text: (smtpConfig.body || 'Please find my CV attached for the position of {title} at {company}.')
-          .replace(/{title}/g, job.title || 'the open position')
-          .replace(/{company}/g, job.company || 'your company')
+          .replace(/{title}/g, cleanTitle)
+          .replace(/{company}/g, cleanCompany)
           .replace(/{email}/g, smtpConfig.user),
         attachments: cvPath ? [{ filename: getAttachmentFilename(), path: cvPath }] : []
       };
@@ -290,6 +295,66 @@ function extractEmails(text) {
     const lower = email.toLowerCase();
     return !blocked.some(b => lower.includes(b)) && !lower.endsWith('.png') && !lower.endsWith('.jpg');
   });
+}
+
+function cleanJobTitle(title) {
+  if (!title) return '';
+  let t = String(title);
+  // Remove emojis and pictographs
+  t = t.replace(/[\u{1F300}-\u{1F9FF}]/gu, '');
+  t = t.replace(/[\u{2600}-\u{27BF}]/gu, '');
+  // Remove encoding artifacts (???, ???? from mangled Arabic)
+  t = t.replace(/\?{2,}/g, '');
+  // Remove hashtags
+  t = t.replace(/#\S+/g, '');
+  // Remove hiring prefixes
+  const prefixes = [
+    /^.*we[''']?re\s+hiring[:\s\-—–|]*/i,
+    /^.*now\s+hiring[:\s\-—–|]*/i,
+    /^.*hiring\s+(?:now|alert)[:\s\-—–|]*/i,
+    /^hiring[:\s\-—–|]+/i,
+    /^job\s+(?:opening|alert|post|vacancy)[:\s\-—–|]*/i,
+    /^vacancy[:\s\-—–|]+/i,
+    /^open\s+position[:\s\-—–|]*/i,
+    /^opportunity[:\s\-—–|]+/i,
+    /^urgent[:\s\-—–|]+/i,
+    /^looking\s+for[:\s\-—–|]+/i,
+    /^مطلوب[:\s\-—–|]+/i,
+    /^وظيفة(?:\s+شاغرة)?[:\s\-—–|]+/i,
+    /^فرصة(?:\s+عمل)?[:\s\-—–|]+/i
+  ];
+  for (const re of prefixes) t = t.replace(re, '');
+  // Remove suffixes commonly added to social posts
+  t = t.replace(/['']s\s+post\s*$/i, '');
+  t = t.replace(/\|\s*(linkedin|post|company\s+page).*$/i, '');
+  t = t.replace(/\s+(?:at|in)\s+(?:saudi|uae|dubai|riyadh|ksa|qatar)[^.]*$/i, '');
+  // Remove "Send your CV to ..." prefix
+  t = t.replace(/^send\s+your\s+cv\s+to\s+\S+\s*[\-—–|:]*\s*/i, '');
+  // Remove location trailers
+  t = t.replace(/\s*[-–—]\s*(?:riyadh|jeddah|dubai|saudi arabia|ksa|uae|qatar|remote|on[-\s]?site|hybrid)\s*.*$/i, '');
+  // Remove opening dash/dot/colon/whitespace junk
+  t = t.replace(/^[\s:\-.|،,]+/, '').replace(/[\s:\-.|،,]+$/, '');
+  // Collapse multiple spaces
+  t = t.replace(/\s+/g, ' ').trim();
+  // Truncate if way too long
+  if (t.length > 80) {
+    t = t.slice(0, 77).replace(/\s\S*$/, '') + '...';
+  }
+  // Fallback if everything got stripped
+  if (t.length < 3) return 'the open position';
+  return t;
+}
+
+function cleanCompanyName(company) {
+  if (!company) return '';
+  let c = String(company);
+  c = c.replace(/[\u{1F300}-\u{1F9FF}]/gu, '');
+  c = c.replace(/\?{2,}/g, '');
+  c = c.replace(/['']s\s+post\s*$/i, '');
+  c = c.replace(/^[\s:\-.|،,]+/, '').replace(/[\s:\-.|،,]+$/, '');
+  c = c.replace(/\s+/g, ' ').trim();
+  if (c.length < 2 || /^unknown$/i.test(c)) return 'your organization';
+  return c;
 }
 
 function extractJobTitleFromText(text) {
@@ -1343,14 +1408,14 @@ Best regards`;
 
   // Build the PowerShell script
   const jobsArray = pending.map(j => {
-    const personalizedSubject = subject
-      .replace(/{title}/g, j.title || 'the open position')
-      .replace(/{company}/g, j.company || 'your company');
+    const ct = cleanJobTitle(j.title) || 'the open position';
+    const cc = cleanCompanyName(j.company) || 'your organization';
+    const personalizedSubject = subject.replace(/{title}/g, ct).replace(/{company}/g, cc);
     const personalizedBody = body
-      .replace(/{title}/g, j.title || 'the open position')
-      .replace(/{company}/g, j.company || 'your company')
+      .replace(/{title}/g, ct)
+      .replace(/{company}/g, cc)
       .replace(/{email}/g, config.user || '');
-    return `    @{ Email = "${ps(j.email)}"; Title = "${ps(j.title)}"; Company = "${ps(j.company)}"; Subject = "${ps(personalizedSubject)}"; Body = @"
+    return `    @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(personalizedSubject)}"; Body = @"
 ${personalizedBody}
 "@ }`;
   }).join(',' + '\n');
@@ -1522,10 +1587,12 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
 
   const isTestMode = !!req.query.test;
   const jobsArray = pending.map(j => {
-    const s = subject.replace(/{title}/g, j.title || 'the open position').replace(/{company}/g, j.company || 'your company');
-    const b = body.replace(/{title}/g, j.title || 'the open position').replace(/{company}/g, j.company || 'your company').replace(/{email}/g, config.user || '');
+    const ct = cleanJobTitle(j.title) || 'the open position';
+    const cc = cleanCompanyName(j.company) || 'your organization';
+    const s = subject.replace(/{title}/g, ct).replace(/{company}/g, cc);
+    const b = body.replace(/{title}/g, ct).replace(/{company}/g, cc).replace(/{email}/g, config.user || '');
     const testPrefix = isTestMode ? '[TEST] ' : '';
-    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(j.title)}"; Company = "${ps(j.company)}"; Subject = "${ps(testPrefix + s)}"; Body = @"
+    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(testPrefix + s)}"; Body = @"
 ${isTestMode ? '>>> This is a TEST email. In production it would go to: ' + (pending[0]?._originalEmail || '?') + '\n\n' : ''}${b}
 "@ }`;
   }).join(',' + '\n');
