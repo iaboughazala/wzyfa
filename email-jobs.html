@@ -682,7 +682,16 @@
       <div class="settings-panel">
         <h2>&#128231; إرسال من Outlook Desktop</h2>
         <div style="color:var(--text); line-height:1.9; font-size:0.9rem;">
-          <p style="color:var(--green); margin-bottom:1rem;">&#10004; الطريقة التالية تتجاوز Smart App Control و Windows Defender</p>
+
+          <h3>&#128065; معاينة الرسالة (مخصصة تلقائياً لكل وظيفة):</h3>
+          <div id="messagePreview" style="color:var(--text-muted); font-size:0.85rem;">
+            <em style="color:var(--text-dim)">جاري التحميل...</em>
+          </div>
+          <div style="color:var(--text-dim); font-size:0.75rem; margin-top:0.5rem; padding:0.5rem; background:rgba(59,130,246,0.08); border-radius:6px;">
+            &#128161; ملاحظة: <code style="color:var(--cyan);">{title}</code> و <code style="color:var(--cyan);">{company}</code> يتم استبدالهم باسم الوظيفة والشركة لكل إيميل. لتعديل النموذج، روح إلى <strong>الإعدادات</strong>.
+          </div>
+
+          <p style="color:var(--green); margin:1rem 0;">&#10004; الطريقة التالية تتجاوز Smart App Control و Windows Defender</p>
 
           <h3>الطريقة المباشرة (موصى بها):</h3>
           <ol style="padding-right:1.5rem; color:var(--text-muted);">
@@ -698,6 +707,20 @@
           <div style="background:var(--bg-input); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin:0.75rem 0; position:relative;">
             <code id="psCommand" style="font-size:0.78rem; color:var(--cyan); direction:ltr; display:block; word-break:break-all; font-family:'JetBrains Mono',monospace; padding-left:3rem;">iwr <span id="scriptUrl"></span> -UseBasicParsing | iex</code>
             <button onclick="copyPsCommand()" class="btn-copy" style="position:absolute; top:0.5rem; left:0.5rem; padding:0.3rem 0.6rem;" title="نسخ">&#128203; نسخ</button>
+          </div>
+
+          <div style="background:rgba(245,158,11,0.1); border:1px solid var(--orange); padding:0.75rem; border-radius:8px; margin:0.75rem 0;">
+            <strong style="color:var(--orange);">&#129514; اختبار أولاً (موصى به):</strong>
+            <p style="color:var(--text-muted); font-size:0.82rem; margin-top:0.4rem;">
+              قبل ما ترسل لكل الوظائف، جرّب إرسال إيميل اختباري لإيميلك أنت للتأكد إن كل شيء شغال:
+            </p>
+            <div style="display:flex; gap:0.5rem; margin-top:0.5rem; flex-wrap:wrap;">
+              <input type="email" id="testEmail" placeholder="your@email.com" dir="ltr" style="flex:1; min-width:180px; background:var(--bg-input); border:1px solid var(--border); color:var(--text); padding:0.4rem 0.6rem; border-radius:6px; font-size:0.85rem;">
+              <button onclick="copyTestCommand()" class="btn" style="background:var(--orange); font-size:0.8rem; padding:0.4rem 0.8rem;">&#128203; نسخ أمر الاختبار</button>
+            </div>
+            <p style="color:var(--text-dim); font-size:0.75rem; margin-top:0.4rem;">
+              هيرسل إيميل واحد بس لإيميلك، مع محتوى أول وظيفة في القائمة، بدون ما يسجلها كـ "مرسلة"
+            </p>
           </div>
 
           <ol start="3" style="padding-right:1.5rem; color:var(--text-muted);">
@@ -1134,6 +1157,15 @@ Best regards,
       const rawUrl = window.location.origin + '/api/send-cv/outlook-script-raw';
       document.getElementById('scriptUrl').textContent = rawUrl;
 
+      // Pre-fill test email from SMTP user if configured
+      try {
+        const smtp = await (await fetch('/api/smtp/config')).json();
+        if (smtp.user) document.getElementById('testEmail').value = smtp.user;
+      } catch (e) {}
+
+      // Load message preview
+      loadMessagePreview();
+
       // Show instructions modal
       document.getElementById('outlookOverlay').classList.add('show');
     }
@@ -1144,6 +1176,69 @@ Best regards,
       navigator.clipboard.writeText(cmd).then(() => {
         showToast('تم نسخ الأمر! الصقه في PowerShell');
       });
+    }
+
+    function copyTestCommand() {
+      const testEmail = document.getElementById('testEmail').value.trim();
+      if (!testEmail || !testEmail.includes('@')) {
+        showToast('أدخل إيميل صحيح للاختبار');
+        return;
+      }
+      const url = window.location.origin + '/api/send-cv/outlook-script-raw?test=' + encodeURIComponent(testEmail);
+      const cmd = `iwr '${url}' -UseBasicParsing | iex`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast('تم نسخ أمر الاختبار! الصقه في PowerShell');
+      });
+    }
+
+    async function loadMessagePreview() {
+      try {
+        const [smtpRes, jobsRes] = await Promise.all([
+          fetch('/api/smtp/config'),
+          fetch('/api/email-jobs')
+        ]);
+        const smtp = await smtpRes.json();
+        const data = await jobsRes.json();
+        const firstJob = (data.jobs || [])[0];
+
+        const previewBox = document.getElementById('messagePreview');
+        if (!firstJob) {
+          previewBox.innerHTML = '<em style="color:var(--text-dim)">لا توجد وظائف حالياً للمعاينة</em>';
+          return;
+        }
+
+        const defaultSubject = 'Application for: {title}';
+        const defaultBody = 'Dear Hiring Manager,\n\nI am writing to express my interest in the {title} position at {company}.\n\nPlease find my CV attached for your review.\n\nBest regards';
+
+        const subject = (smtp.subject || defaultSubject)
+          .replace(/{title}/g, firstJob.title || 'the open position')
+          .replace(/{company}/g, firstJob.company || 'your company');
+
+        const body = (smtp.body || defaultBody)
+          .replace(/{title}/g, firstJob.title || 'the open position')
+          .replace(/{company}/g, firstJob.company || 'your company')
+          .replace(/{email}/g, smtp.user || '');
+
+        previewBox.innerHTML = `
+          <div style="padding:0.5rem; background:var(--bg); border-radius:6px; margin-top:0.3rem;">
+            <div style="font-size:0.75rem; color:var(--text-dim);">إلى:</div>
+            <div style="color:var(--cyan); font-family:'JetBrains Mono',monospace; font-size:0.8rem; direction:ltr;">${escapeHtml(firstJob.email)}</div>
+          </div>
+          <div style="padding:0.5rem; background:var(--bg); border-radius:6px; margin-top:0.3rem;">
+            <div style="font-size:0.75rem; color:var(--text-dim);">Subject:</div>
+            <div style="color:var(--text); font-size:0.85rem;">${escapeHtml(subject)}</div>
+          </div>
+          <div style="padding:0.5rem; background:var(--bg); border-radius:6px; margin-top:0.3rem;">
+            <div style="font-size:0.75rem; color:var(--text-dim);">Body:</div>
+            <div style="color:var(--text); font-size:0.82rem; white-space:pre-wrap; max-height:180px; overflow-y:auto;">${escapeHtml(body)}</div>
+          </div>
+          <div style="padding:0.5rem; margin-top:0.3rem; color:var(--purple); font-size:0.78rem;">
+            &#128206; مرفق: CV ملفك
+          </div>
+        `;
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     async function loadSentHistory() {

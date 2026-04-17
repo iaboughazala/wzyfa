@@ -1482,28 +1482,40 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
   const jobs = loadEmailJobs();
   const sent = loadSentEmails();
   const sentKeys = new Set(sent.map(s => s.key));
-  const pending = jobs.filter(j => {
+  let pending = jobs.filter(j => {
     if (!j.email) return false;
     const key = `${j.email}|||${(j.title || '').toLowerCase()}`;
     return !sentKeys.has(key);
   });
 
+  // Test mode: ?test=EMAIL sends to user's own email (first job's content)
+  // Limit mode: ?limit=N sends to only the first N jobs
+  if (req.query.test) {
+    const testEmail = String(req.query.test);
+    pending = pending.slice(0, 1).map(j => ({ ...j, _originalEmail: j.email, email: testEmail, _isTest: true }));
+  } else if (req.query.limit) {
+    const n = Math.max(1, parseInt(req.query.limit) || 1);
+    pending = pending.slice(0, n);
+  }
+
   const subject = config.subject || 'Application for: {title}';
   const body = config.body || 'Dear Hiring Manager,\n\nI am writing to express my interest in the {title} position at {company}.\n\nPlease find my CV attached for your review.\n\nBest regards';
   const ps = (s) => String(s || '').replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
 
+  const isTestMode = !!req.query.test;
   const jobsArray = pending.map(j => {
     const s = subject.replace(/{title}/g, j.title || 'the open position').replace(/{company}/g, j.company || 'your company');
     const b = body.replace(/{title}/g, j.title || 'the open position').replace(/{company}/g, j.company || 'your company').replace(/{email}/g, config.user || '');
-    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(j.title)}"; Company = "${ps(j.company)}"; Subject = "${ps(s)}"; Body = @"
-${b}
+    const testPrefix = isTestMode ? '[TEST] ' : '';
+    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(j.title)}"; Company = "${ps(j.company)}"; Subject = "${ps(testPrefix + s)}"; Body = @"
+${isTestMode ? '>>> This is a TEST email. In production it would go to: ' + (pending[0]?._originalEmail || '?') + '\n\n' : ''}${b}
 "@ }`;
   }).join(',' + '\n');
 
   const host = req.get('host');
   const protocol = req.protocol;
   const cvUrl = `${protocol}://${host}/api/cv/download`;
-  const markSentUrl = `${protocol}://${host}/api/send-cv/mark-sent`;
+  const markSentUrl = isTestMode ? '' : `${protocol}://${host}/api/send-cv/mark-sent`;
 
   const script = `$ErrorActionPreference = "Continue"
 Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
@@ -1541,10 +1553,10 @@ foreach ($Job in $Jobs) {
         $Mail.Send()
         Write-Host "  [OK] Sent" -ForegroundColor Green
         $Sent++
-        try {
+        ${markSentUrl ? `try {
             $payload = @{ email = $Job.Email; title = $Job.Title; company = $Job.Company } | ConvertTo-Json
             Invoke-RestMethod -Uri "${markSentUrl}" -Method Post -Body $payload -ContentType "application/json" -TimeoutSec 5 | Out-Null
-        } catch { }
+        } catch { }` : '# TEST MODE - not marking as sent on server'}
     } catch { Write-Host "  [FAIL] $_" -ForegroundColor Red ; $Failed++ }
     if ($Index -lt $Jobs.Count) { Start-Sleep -Seconds $DelaySeconds }
 }
