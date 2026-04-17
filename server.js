@@ -1291,6 +1291,181 @@ app.get('/api/send-cv/history', (req, res) => {
   res.json({ total: sent.length, sent });
 });
 
+// Download CV directly
+app.get('/api/cv/download', (req, res) => {
+  const cvPath = getCVPath();
+  if (!cvPath) return res.status(404).json({ error: 'CV not uploaded' });
+  res.download(cvPath, path.basename(cvPath));
+});
+
+// Generate PowerShell script for Outlook Desktop automation
+app.get('/api/send-cv/outlook-script', (req, res) => {
+  const config = loadSmtpConfig() || {};
+  const cvPath = getCVPath();
+  if (!cvPath) return res.status(400).send('# Error: CV not uploaded. Upload CV first from the website.');
+
+  const jobs = loadEmailJobs();
+  const sent = loadSentEmails();
+  const sentKeys = new Set(sent.map(s => s.key));
+
+  const pending = jobs.filter(j => {
+    if (!j.email) return false;
+    const key = `${j.email}|||${(j.title || '').toLowerCase()}`;
+    return !sentKeys.has(key);
+  });
+
+  const subject = config.subject || 'Application for: {title}';
+  const body = config.body || `Dear Hiring Manager,
+
+I am writing to express my interest in the {title} position at {company}.
+
+Please find my CV attached for your review.
+
+Best regards`;
+
+  // Escape PowerShell strings
+  const ps = (s) => String(s || '').replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
+
+  // Build the PowerShell script
+  const jobsArray = pending.map(j => {
+    const personalizedSubject = subject
+      .replace(/{title}/g, j.title || 'the open position')
+      .replace(/{company}/g, j.company || 'your company');
+    const personalizedBody = body
+      .replace(/{title}/g, j.title || 'the open position')
+      .replace(/{company}/g, j.company || 'your company')
+      .replace(/{email}/g, config.user || '');
+    return `    @{ Email = "${ps(j.email)}"; Title = "${ps(j.title)}"; Company = "${ps(j.company)}"; Subject = "${ps(personalizedSubject)}"; Body = @"
+${personalizedBody}
+"@ }`;
+  }).join(',' + '\n');
+
+  // Host for CV download
+  const host = req.get('host');
+  const protocol = req.protocol;
+  const cvUrl = `${protocol}://${host}/api/cv/download`;
+  const markSentUrl = `${protocol}://${host}/api/send-cv/mark-sent`;
+
+  const script = `# ============================================
+# Wzyfa — Outlook Desktop Auto-Send CV
+# ============================================
+# This script sends your CV to ${pending.length} jobs via your Outlook Desktop.
+# Requirements:
+#   - Outlook Desktop installed and signed in
+#   - Windows PowerShell
+# Run: right-click this file -> Run with PowerShell
+# ============================================
+
+$ErrorActionPreference = "Continue"
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  Wzyfa — Outlook Auto-Send CV" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Download CV from server
+$CvPath = "$env:TEMP\\wzyfa-cv-$(Get-Random)${path.extname(cvPath)}"
+Write-Host "Downloading CV from server..." -ForegroundColor Yellow
+try {
+    Invoke-WebRequest -Uri "${cvUrl}" -OutFile $CvPath -UseBasicParsing
+    Write-Host "CV downloaded to: $CvPath" -ForegroundColor Green
+} catch {
+    Write-Host "ERROR: Could not download CV. $_" -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+# Connect to Outlook
+Write-Host "Connecting to Outlook Desktop..." -ForegroundColor Yellow
+try {
+    $Outlook = New-Object -ComObject Outlook.Application
+    $Namespace = $Outlook.GetNamespace("MAPI")
+    Write-Host "Outlook connected!" -ForegroundColor Green
+} catch {
+    Write-Host "ERROR: Could not connect to Outlook. Is it installed?" -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+# Job list
+$Jobs = @(
+${jobsArray}
+)
+
+Write-Host ""
+Write-Host "Total jobs to send: $($Jobs.Count)" -ForegroundColor Cyan
+$Confirm = Read-Host "Press Enter to start, or type 'n' to cancel"
+if ($Confirm -eq 'n') { exit 0 }
+
+$Sent = 0
+$Failed = 0
+$DelaySeconds = 20  # Delay between emails to avoid spam filters
+
+foreach ($Job in $Jobs) {
+    $Index = $Sent + $Failed + 1
+    Write-Host ""
+    Write-Host "[$Index/$($Jobs.Count)] Sending to $($Job.Email)..." -ForegroundColor Yellow
+    Write-Host "  Title: $($Job.Title)" -ForegroundColor Gray
+    Write-Host "  Company: $($Job.Company)" -ForegroundColor Gray
+
+    try {
+        $Mail = $Outlook.CreateItem(0)  # 0 = olMailItem
+        $Mail.To = $Job.Email
+        $Mail.Subject = $Job.Subject
+        $Mail.Body = $Job.Body
+        if (Test-Path $CvPath) {
+            $null = $Mail.Attachments.Add($CvPath)
+        }
+        $Mail.Send()
+        Write-Host "  [OK] Sent" -ForegroundColor Green
+        $Sent++
+
+        # Notify server that this was sent
+        try {
+            $payload = @{ email = $Job.Email; title = $Job.Title; company = $Job.Company } | ConvertTo-Json
+            Invoke-RestMethod -Uri "${markSentUrl}" -Method Post -Body $payload -ContentType "application/json" -TimeoutSec 5 | Out-Null
+        } catch { }
+    } catch {
+        Write-Host "  [FAIL] $_" -ForegroundColor Red
+        $Failed++
+    }
+
+    if ($Index -lt $Jobs.Count) {
+        Write-Host "  Waiting $DelaySeconds seconds before next email..." -ForegroundColor DarkGray
+        Start-Sleep -Seconds $DelaySeconds
+    }
+}
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  Complete!" -ForegroundColor Cyan
+Write-Host "  Sent: $Sent" -ForegroundColor Green
+Write-Host "  Failed: $Failed" -ForegroundColor Red
+Write-Host "========================================" -ForegroundColor Cyan
+
+# Cleanup
+Remove-Item $CvPath -ErrorAction SilentlyContinue
+
+Read-Host "Press Enter to exit"
+`;
+
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'attachment; filename="wzyfa-outlook-send.ps1"');
+  res.send(script);
+});
+
+// Mark email as sent (called by PowerShell script)
+app.post('/api/send-cv/mark-sent', (req, res) => {
+  const { email, title, company } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const sent = loadSentEmails();
+  const key = `${email}|||${(title || '').toLowerCase()}`;
+  if (!sent.some(s => s.key === key)) {
+    sent.push({ key, email, title, company, sentAt: new Date().toISOString(), via: 'outlook-desktop' });
+    saveSentEmails(sent);
+  }
+  res.json({ ok: true });
+});
+
 // ─── Start ───
 app.listen(PORT, () => {
   console.log(`[Server] وظيفة running on http://localhost:${PORT}`);

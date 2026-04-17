@@ -668,9 +668,42 @@
         </div>
         <div class="bulk-info" id="progressText" style="margin-top:0.3rem; display:none;"></div>
       </div>
-      <div style="display:flex; gap:0.5rem; align-items:center;">
+      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
         <span class="bulk-info" id="sentCount"></span>
-        <button class="btn btn-success" id="bulkSendBtn" onclick="bulkSend()">&#9654; أرسل للكل</button>
+        <button class="btn" id="outlookBtn" onclick="downloadOutlookScript()" style="background:#0078d4;" title="تحميل سكريبت يرسل تلقائي من Outlook Desktop">
+          &#128228; تحميل سكريبت Outlook
+        </button>
+        <button class="btn btn-success" id="bulkSendBtn" onclick="bulkSend()">&#9654; أرسل SMTP</button>
+      </div>
+    </div>
+
+    <!-- Outlook Instructions Modal -->
+    <div class="settings-overlay" id="outlookOverlay" onclick="if(event.target===this)document.getElementById('outlookOverlay').classList.remove('show')">
+      <div class="settings-panel">
+        <h2>&#128231; إرسال من Outlook Desktop</h2>
+        <div style="color:var(--text); line-height:1.9; font-size:0.9rem;">
+          <p style="color:var(--green); margin-bottom:1rem;">&#10004; السكريبت تم تحميله!</p>
+          <h3>خطوات الاستخدام:</h3>
+          <ol style="padding-right:1.5rem; color:var(--text-muted);">
+            <li>تأكد إن <strong style="color:var(--text)">Outlook Desktop</strong> مفتوح ومسجل دخول</li>
+            <li>افتح مجلد Downloads</li>
+            <li>كليك يمين على ملف <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">wzyfa-outlook-send.ps1</code></li>
+            <li>اختر <strong style="color:var(--text)">Run with PowerShell</strong></li>
+            <li>لو ظهرت رسالة أمان، اكتب <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">R</code> واضغط Enter</li>
+            <li>اضغط Enter لبدء الإرسال</li>
+          </ol>
+          <div style="background:rgba(59,130,246,0.1); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin-top:1rem;">
+            <strong style="color:var(--accent);">ملاحظات:</strong>
+            <ul style="padding-right:1.5rem; margin-top:0.5rem; color:var(--text-muted);">
+              <li>الإرسال يتم كل 20 ثانية لتجنب فلاتر الـ spam</li>
+              <li>CV يتم تحميله من السيرفر تلقائياً</li>
+              <li>لو الـ PowerShell مش شغال، افتح PowerShell يدوياً واكتب: <br><code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px; font-size:0.75rem;">Set-ExecutionPolicy -Scope Process Bypass</code></li>
+            </ul>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-secondary" onclick="document.getElementById('outlookOverlay').classList.remove('show')">فهمت</button>
+        </div>
       </div>
     </div>
 
@@ -1071,6 +1104,30 @@ Best regards,
           }
         } catch (e) {}
       }, 3000);
+    }
+
+    async function downloadOutlookScript() {
+      // First check if CV is uploaded
+      const cvRes = await fetch('/api/cv/info');
+      const cvData = await cvRes.json();
+      if (!cvData.uploaded) {
+        showToast('ارفع ملف CV أولاً من الإعدادات');
+        openSettings();
+        return;
+      }
+
+      // Trigger download
+      const link = document.createElement('a');
+      link.href = '/api/send-cv/outlook-script';
+      link.download = 'wzyfa-outlook-send.ps1';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Show instructions
+      setTimeout(() => {
+        document.getElementById('outlookOverlay').classList.add('show');
+      }, 500);
     }
 
     async function loadSentHistory() {
