@@ -1430,8 +1430,9 @@ Please find my CV attached for your review.
 
 Best regards`;
 
-  // Escape PowerShell strings
-  const ps = (s) => String(s || '').replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
+  // PowerShell single-quoted string escape: only ' needs escaping → ''
+  // Single-quoted strings don't interpret $, &, |, ", `, newlines — safest for arbitrary data
+  const ps = (s) => String(s || '').replace(/'/g, "''");
 
   // Build the PowerShell script — encode bodies as Base64 to avoid escaping issues
   const jobsArray = pending.map(j => {
@@ -1443,7 +1444,7 @@ Best regards`;
       .replace(/{company}/g, cc)
       .replace(/{email}/g, config.user || '');
     const bodyB64 = Buffer.from(personalizedBody, 'utf8').toString('base64');
-    return `    @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(personalizedSubject)}"; BodyB64 = "${bodyB64}" }`;
+    return `    @{ Email = '${ps(j.email)}'; Title = '${ps(ct)}'; Company = '${ps(cc)}'; Subject = '${ps(personalizedSubject)}'; BodyB64 = '${bodyB64}' }`;
   }).join(',' + '\n');
 
   // Host for CV download
@@ -1609,7 +1610,8 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
 
   const subject = config.subject || 'Application for: {title}';
   const body = config.body || 'Dear Hiring Manager,\n\nI am writing to express my interest in the {title} position at {company}.\n\nPlease find my CV attached for your review.\n\nBest regards';
-  const ps = (s) => String(s || '').replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"');
+  // PowerShell single-quoted string escape: only ' needs escaping → ''
+  const ps = (s) => String(s || '').replace(/'/g, "''");
 
   const isTestMode = !!req.query.test;
   // Encode bodies as Base64 to avoid PowerShell escaping issues with special chars
@@ -1623,7 +1625,7 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
     }
     const bodyB64 = Buffer.from(b, 'utf8').toString('base64');
     const testPrefix = isTestMode ? '[TEST] ' : '';
-    return `  @{ Email = "${ps(j.email)}"; Title = "${ps(ct)}"; Company = "${ps(cc)}"; Subject = "${ps(testPrefix + s)}"; BodyB64 = "${bodyB64}" }`;
+    return `  @{ Email = '${ps(j.email)}'; Title = '${ps(ct)}'; Company = '${ps(cc)}'; Subject = '${ps(testPrefix + s)}'; BodyB64 = '${bodyB64}' }`;
   }).join(',' + '\n');
 
   const host = req.get('host');
