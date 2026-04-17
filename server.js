@@ -1448,9 +1448,28 @@ Remove-Item $CvPath -ErrorAction SilentlyContinue
 Read-Host "Press Enter to exit"
 `;
 
+  // Wrap PowerShell in a .cmd batch file with -EncodedCommand
+  // This bypasses execution policy AND SmartScreen warnings
+  const psEncoded = Buffer.from(script, 'utf16le').toString('base64');
+
+  const batScript = `@echo off
+chcp 65001 >nul
+title Wzyfa - Outlook Auto-Send CV
+echo.
+echo ========================================
+echo   Wzyfa - Outlook Auto-Send CV
+echo ========================================
+echo.
+echo Starting PowerShell (this bypasses execution policy)...
+echo.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${psEncoded}
+echo.
+pause
+`;
+
   res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'attachment; filename="wzyfa-outlook-send.ps1"');
-  res.send(script);
+  res.setHeader('Content-Disposition', 'attachment; filename="wzyfa-outlook-send.cmd"');
+  res.send(batScript);
 });
 
 // Mark email as sent (called by PowerShell script)

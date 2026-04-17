@@ -687,9 +687,13 @@
           <ol style="padding-right:1.5rem; color:var(--text-muted);">
             <li>تأكد إن <strong style="color:var(--text)">Outlook Desktop</strong> مفتوح ومسجل دخول</li>
             <li>افتح مجلد Downloads</li>
-            <li>كليك يمين على ملف <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">wzyfa-outlook-send.ps1</code></li>
-            <li>اختر <strong style="color:var(--text)">Run with PowerShell</strong></li>
-            <li>لو ظهرت رسالة أمان، اكتب <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">R</code> واضغط Enter</li>
+            <li><strong style="color:var(--text)">دبل كليك</strong> على ملف <code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px;">wzyfa-outlook-send.cmd</code></li>
+            <li>لو ظهرت رسالة <strong>"Windows protected your PC"</strong>:
+              <ul style="padding-right:1.5rem; margin-top:0.3rem;">
+                <li>اضغط على <strong style="color:var(--text)">More info</strong></li>
+                <li>اضغط على <strong style="color:var(--text)">Run anyway</strong></li>
+              </ul>
+            </li>
             <li>اضغط Enter لبدء الإرسال</li>
           </ol>
           <div style="background:rgba(59,130,246,0.1); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin-top:1rem;">
@@ -697,7 +701,7 @@
             <ul style="padding-right:1.5rem; margin-top:0.5rem; color:var(--text-muted);">
               <li>الإرسال يتم كل 20 ثانية لتجنب فلاتر الـ spam</li>
               <li>CV يتم تحميله من السيرفر تلقائياً</li>
-              <li>لو الـ PowerShell مش شغال، افتح PowerShell يدوياً واكتب: <br><code style="background:var(--bg-input); padding:0.1rem 0.4rem; border-radius:4px; font-size:0.75rem;">Set-ExecutionPolicy -Scope Process Bypass</code></li>
+              <li>الـ CMD file يتجاوز مشكلة Execution Policy تلقائياً</li>
             </ul>
           </div>
         </div>
@@ -1119,7 +1123,7 @@ Best regards,
       // Trigger download
       const link = document.createElement('a');
       link.href = '/api/send-cv/outlook-script';
-      link.download = 'wzyfa-outlook-send.ps1';
+      link.download = 'wzyfa-outlook-send.cmd';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
