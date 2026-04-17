@@ -76,6 +76,21 @@ function getCVPath() {
   return null;
 }
 
+// Build attachment filename from sender name
+function getAttachmentFilename() {
+  const config = loadSmtpConfig() || {};
+  const cvPath = getCVPath();
+  if (!cvPath) return 'CV.pdf';
+  const ext = path.extname(cvPath);
+  const name = (config.senderName || '').trim();
+  if (name) {
+    // Clean name: remove characters unsafe for filenames
+    const cleanName = name.replace(/[\\/:*?"<>|]/g, '').trim();
+    return `${cleanName} - CV${ext}`;
+  }
+  return `CV${ext}`;
+}
+
 // ─── Email Sending Queue ───
 let sendingQueue = [];
 let isSending = false;
@@ -122,7 +137,7 @@ async function processEmailQueue() {
           .replace(/{title}/g, job.title || 'the open position')
           .replace(/{company}/g, job.company || 'your company')
           .replace(/{email}/g, smtpConfig.user),
-        attachments: cvPath ? [{ filename: path.basename(cvPath), path: cvPath }] : []
+        attachments: cvPath ? [{ filename: getAttachmentFilename(), path: cvPath }] : []
       };
 
       await transporter.sendMail(mailOptions);
@@ -1291,11 +1306,11 @@ app.get('/api/send-cv/history', (req, res) => {
   res.json({ total: sent.length, sent });
 });
 
-// Download CV directly
+// Download CV directly (uses sender name for filename)
 app.get('/api/cv/download', (req, res) => {
   const cvPath = getCVPath();
   if (!cvPath) return res.status(404).json({ error: 'CV not uploaded' });
-  res.download(cvPath, path.basename(cvPath));
+  res.download(cvPath, getAttachmentFilename());
 });
 
 // Generate PowerShell script for Outlook Desktop automation
@@ -1345,6 +1360,7 @@ ${personalizedBody}
   const protocol = req.protocol;
   const cvUrl = `${protocol}://${host}/api/cv/download`;
   const markSentUrl = `${protocol}://${host}/api/send-cv/mark-sent`;
+  const attachmentFilename = getAttachmentFilename();
 
   const script = `# ============================================
 # Wzyfa — Outlook Desktop Auto-Send CV
@@ -1362,12 +1378,14 @@ Write-Host "  Wzyfa — Outlook Auto-Send CV" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Download CV from server
-$CvPath = "$env:TEMP\\wzyfa-cv-$(Get-Random)${path.extname(cvPath)}"
-Write-Host "Downloading CV from server..." -ForegroundColor Yellow
+# Download CV from server — filename preserved as personalized name
+$CvFolder = "$env:TEMP\\wzyfa-$(Get-Random)"
+New-Item -ItemType Directory -Path $CvFolder -Force | Out-Null
+$CvPath = "$CvFolder\\${ps(attachmentFilename)}"
+Write-Host "Downloading CV (${ps(attachmentFilename)})..." -ForegroundColor Yellow
 try {
     Invoke-WebRequest -Uri "${cvUrl}" -OutFile $CvPath -UseBasicParsing
-    Write-Host "CV downloaded to: $CvPath" -ForegroundColor Green
+    Write-Host "CV ready: $CvPath" -ForegroundColor Green
 } catch {
     Write-Host "ERROR: Could not download CV. $_" -ForegroundColor Red
     Read-Host "Press Enter to exit"
@@ -1443,7 +1461,7 @@ Write-Host "  Failed: $Failed" -ForegroundColor Red
 Write-Host "========================================" -ForegroundColor Cyan
 
 # Cleanup
-Remove-Item $CvPath -ErrorAction SilentlyContinue
+Remove-Item $CvFolder -Recurse -Force -ErrorAction SilentlyContinue
 
 Read-Host "Press Enter to exit"
 `;
@@ -1516,14 +1534,18 @@ ${isTestMode ? '>>> This is a TEST email. In production it would go to: ' + (pen
   const protocol = req.protocol;
   const cvUrl = `${protocol}://${host}/api/cv/download`;
   const markSentUrl = isTestMode ? '' : `${protocol}://${host}/api/send-cv/mark-sent`;
+  const attachmentFilename = getAttachmentFilename();
 
   const script = `$ErrorActionPreference = "Continue"
 Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Wzyfa - Outlook Auto-Send CV" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan ; Write-Host ""
 
-$CvPath = "$env:TEMP\\wzyfa-cv-$(Get-Random)${path.extname(cvPath)}"
-Write-Host "Downloading CV..." -ForegroundColor Yellow
+# Save CV with personalized name so it appears as "${ps(attachmentFilename)}" in the email
+$CvFolder = "$env:TEMP\\wzyfa-$(Get-Random)"
+New-Item -ItemType Directory -Path $CvFolder -Force | Out-Null
+$CvPath = "$CvFolder\\${ps(attachmentFilename)}"
+Write-Host "Downloading CV as '${ps(attachmentFilename)}'..." -ForegroundColor Yellow
 try { Invoke-WebRequest -Uri "${cvUrl}" -OutFile $CvPath -UseBasicParsing ; Write-Host "CV ready: $CvPath" -ForegroundColor Green }
 catch { Write-Host "ERROR downloading CV: $_" -ForegroundColor Red ; return }
 
@@ -1562,7 +1584,7 @@ foreach ($Job in $Jobs) {
 }
 
 Write-Host "" ; Write-Host "Complete! Sent: $Sent | Failed: $Failed" -ForegroundColor Cyan
-Remove-Item $CvPath -ErrorAction SilentlyContinue
+Remove-Item $CvFolder -Recurse -Force -ErrorAction SilentlyContinue
 `;
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');

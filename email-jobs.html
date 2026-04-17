@@ -1233,7 +1233,7 @@ Best regards,
             <div style="color:var(--text); font-size:0.82rem; white-space:pre-wrap; max-height:180px; overflow-y:auto;">${escapeHtml(body)}</div>
           </div>
           <div style="padding:0.5rem; margin-top:0.3rem; color:var(--purple); font-size:0.78rem;">
-            &#128206; مرفق: CV ملفك
+            &#128206; مرفق: ${escapeHtml(smtp.attachmentName || ((smtp.senderName ? smtp.senderName + ' - ' : '') + 'CV.pdf'))}
           </div>
         `;
       } catch (e) {
