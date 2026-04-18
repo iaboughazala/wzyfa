@@ -1797,13 +1797,14 @@ if ($Confirm -eq 'n') { exit 0 }
 $Sent = 0
 $Failed = 0
 
-# Human-like delay: target total duration 60-120 min (1-2 hours)
-# Distributed across all emails with ±30% randomness per interval
-$TargetDurationMin = Get-Random -Minimum 60 -Maximum 120
-$TargetDurationSec = $TargetDurationMin * 60
-$AvgDelaySec = [math]::Max(60, [math]::Floor($TargetDurationSec / [math]::Max($Jobs.Count, 1)))
+# Fixed human-like delay: 20-45 minutes between each email
+$MinDelaySec = 20 * 60   # 1200
+$MaxDelaySec = 45 * 60   # 2700
+$AvgDelayMin = ($MinDelaySec + $MaxDelaySec) / 2 / 60
+$EstTotalMin = [math]::Round($Jobs.Count * $AvgDelayMin, 0)
+$EstTotalHours = [math]::Round($EstTotalMin / 60, 1)
 Write-Host ""
-Write-Host "Session plan: ~$TargetDurationMin minutes total, avg $AvgDelaySec sec between emails" -ForegroundColor DarkCyan
+Write-Host "Delays: 20-45 min between emails | Estimated: ~$EstTotalMin min (~$EstTotalHours hours)" -ForegroundColor DarkCyan
 
 foreach ($Job in $Jobs) {
     $Index = $Sent + $Failed + 1
@@ -1835,12 +1836,9 @@ foreach ($Job in $Jobs) {
     }
 
     if ($Index -lt $Jobs.Count) {
-        # Human-like delay: average ±30% randomness
-        $MinDelay = [math]::Max(60, [math]::Floor($AvgDelaySec * 0.7))
-        $MaxDelay = [math]::Floor($AvgDelaySec * 1.3)
-        $ThisDelay = Get-Random -Minimum $MinDelay -Maximum $MaxDelay
+        $ThisDelay = Get-Random -Minimum $MinDelaySec -Maximum $MaxDelaySec
         $DelayMin = [math]::Round($ThisDelay / 60, 1)
-        Write-Host "  Waiting $ThisDelay seconds (~$DelayMin min)..." -ForegroundColor DarkGray
+        Write-Host "  Waiting $DelayMin min before next..." -ForegroundColor DarkGray
         Start-Sleep -Seconds $ThisDelay
     }
 }
@@ -2027,10 +2025,13 @@ $Confirm = Read-Host "Press Enter to start, 'n' to cancel"
 if ($Confirm -eq 'n') { return }
 
 $Sent = 0 ; $Failed = 0
-# Human-like delay: target total duration 60-120 min, distributed across emails
-$TargetDurationMin = Get-Random -Minimum 60 -Maximum 120
-$AvgDelaySec = [math]::Max(60, [math]::Floor($TargetDurationMin * 60 / [math]::Max($Jobs.Count, 1)))
-Write-Host "" ; Write-Host "Session: ~$TargetDurationMin min total, avg $AvgDelaySec sec between emails" -ForegroundColor DarkCyan
+# Fixed human-like delay range: 20-45 minutes between each email
+$MinDelaySec = 20 * 60   # 1200 seconds
+$MaxDelaySec = 45 * 60   # 2700 seconds
+$AvgDelayMin = ($MinDelaySec + $MaxDelaySec) / 2 / 60
+$EstTotalMin = [math]::Round($Jobs.Count * $AvgDelayMin, 0)
+$EstTotalHours = [math]::Round($EstTotalMin / 60, 1)
+Write-Host "" ; Write-Host "Delays: 20-45 min between emails | Estimated session: ~$EstTotalMin min (~$EstTotalHours hours)" -ForegroundColor DarkCyan
 
 foreach ($Job in $Jobs) {
     $Index = $Sent + $Failed + 1
@@ -2051,11 +2052,9 @@ foreach ($Job in $Jobs) {
         } catch { }` : '# TEST MODE - not marking as sent on server'}
     } catch { Write-Host "  [FAIL] $_" -ForegroundColor Red ; $Failed++ }
     if ($Index -lt $Jobs.Count) {
-        $MinDelay = [math]::Max(60, [math]::Floor($AvgDelaySec * 0.7))
-        $MaxDelay = [math]::Floor($AvgDelaySec * 1.3)
-        $ThisDelay = Get-Random -Minimum $MinDelay -Maximum $MaxDelay
+        $ThisDelay = Get-Random -Minimum $MinDelaySec -Maximum $MaxDelaySec
         $DelayMin = [math]::Round($ThisDelay / 60, 1)
-        Write-Host "  Next in $ThisDelay sec (~$DelayMin min)..." -ForegroundColor DarkGray
+        Write-Host "  Next in $DelayMin min..." -ForegroundColor DarkGray
         Start-Sleep -Seconds $ThisDelay
     }
 }
