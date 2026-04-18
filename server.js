@@ -1213,6 +1213,16 @@ async function fetchBaytEmailJobs(browser) {
   return jobs;
 }
 
+// Merge newly-scraped jobs with CURRENT disk state (not in-memory stale copy)
+// This prevents overwriting if the file was modified externally during the scan.
+function mergeAndSaveEmailJobs(newJobs, label) {
+  const freshDisk = loadEmailJobs();
+  const merged = deduplicateEmailJobs([...newJobs, ...freshDisk]);
+  saveEmailJobs(merged);
+  console.log(`[EmailScan] ${label}: +${newJobs.length} scraped, disk now has ${merged.length} unique jobs (was ${freshDisk.length})`);
+  return merged;
+}
+
 // ─── Email Jobs Scan Orchestrator ───
 async function runEmailJobsScan() {
   if (emailScanning) {
@@ -1223,7 +1233,6 @@ async function runEmailJobsScan() {
   console.log('[EmailScan] ═══════════════════════════════════════');
   console.log('[EmailScan] Email jobs scan started at', new Date().toISOString());
 
-  let allEmailJobs = loadEmailJobs();
   let browser = null;
 
   try {
@@ -1232,20 +1241,17 @@ async function runEmailJobsScan() {
 
     // Source 1: Google
     const googleJobs = await fetchGoogleEmailJobs(browser);
-    allEmailJobs = deduplicateEmailJobs([...googleJobs, ...allEmailJobs]);
-    saveEmailJobs(allEmailJobs);
+    mergeAndSaveEmailJobs(googleJobs, 'Google');
 
     // Source 2: Twitter
     const twitterJobs = await fetchTwitterEmailJobs(browser);
-    allEmailJobs = deduplicateEmailJobs([...twitterJobs, ...allEmailJobs]);
-    saveEmailJobs(allEmailJobs);
+    mergeAndSaveEmailJobs(twitterJobs, 'Twitter');
 
     // Source 3: Bayt
     const baytJobs = await fetchBaytEmailJobs(browser);
-    allEmailJobs = deduplicateEmailJobs([...baytJobs, ...allEmailJobs]);
-    saveEmailJobs(allEmailJobs);
+    const finalJobs = mergeAndSaveEmailJobs(baytJobs, 'Bayt');
 
-    console.log(`[EmailScan] Total: ${allEmailJobs.length} email jobs saved`);
+    console.log(`[EmailScan] Total: ${finalJobs.length} email jobs saved`);
   } catch (e) {
     console.error('[EmailScan] Fatal error:', e.message);
   } finally {
@@ -2121,10 +2127,11 @@ app.listen(PORT, () => {
     runDeepScan();
   }, 30000);
 
-  // Initial email jobs scan after 2 minutes
-  setTimeout(() => {
-    runEmailJobsScan();
-  }, 120000);
+  // NOTE: removed the "initial scan 2 minutes after boot" — it caused a
+  // race condition when we restored data after a deploy (the scan would
+  // overwrite the restored file with its stale in-memory copy). Scans
+  // now happen ONLY on the cron schedule or when triggered manually
+  // via POST /api/email-jobs/scan.
 
   // Scheduled scan every 4 hours
   cron.schedule('0 */4 * * *', () => {
