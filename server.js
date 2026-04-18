@@ -388,6 +388,35 @@ function extractEmails(text) {
   });
 }
 
+// Personal email domains — CVs sent here usually reach individuals
+// (freelance recruiters, random people) not hiring managers. Higher
+// bounce rate, lower response rate, and sometimes scammy.
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  // Google
+  'gmail.com', 'googlemail.com',
+  // Yahoo
+  'yahoo.com', 'yahoo.co.uk', 'yahoo.co.in', 'yahoo.fr', 'yahoo.de',
+  'yahoo.com.au', 'yahoo.com.br', 'yahoo.co.jp', 'ymail.com', 'rocketmail.com',
+  // Microsoft
+  'outlook.com', 'hotmail.com', 'hotmail.co.uk', 'hotmail.fr', 'hotmail.de',
+  'live.com', 'live.co.uk', 'msn.com', 'outlook.sa',
+  // Apple
+  'icloud.com', 'me.com', 'mac.com',
+  // Other popular free providers
+  'aol.com', 'proton.me', 'protonmail.com', 'tutanota.com',
+  'yandex.com', 'yandex.ru', 'mail.ru', 'bk.ru', 'inbox.ru',
+  'gmx.com', 'gmx.de', 'gmx.net', 'web.de', 't-online.de',
+  'zoho.com', 'fastmail.com', 'hushmail.com',
+  // Regional free providers common in MENA
+  'rediffmail.com', 'yahoo.com.sa', 'mail.com'
+]);
+
+function isPersonalEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const domain = email.split('@')[1]?.toLowerCase().trim();
+  return domain ? PERSONAL_EMAIL_DOMAINS.has(domain) : false;
+}
+
 // Check if a job title/snippet actually relates to the user's target roles
 // Rejects obviously off-topic jobs (plumbers, drivers, nurses, etc.)
 function isRelevantJob(title, snippet) {
@@ -1423,7 +1452,10 @@ app.get('/email-jobs', (req, res) => {
 // Email Jobs API with filters
 app.get('/api/email-jobs', (req, res) => {
   let jobs = loadEmailJobs();
-  const { q, country, date, region } = req.query;
+  const { q, country, date, region, emailType } = req.query;
+
+  // Tag each job with isPersonal so the UI can show a badge / filter
+  jobs = jobs.map(j => ({ ...j, isPersonal: isPersonalEmail(j.email) }));
 
   if (q) {
     const search = q.toLowerCase();
@@ -1445,6 +1477,14 @@ app.get('/api/email-jobs', (req, res) => {
   if (region && region !== 'all') {
     jobs = jobs.filter(j => (j.region || 'gulf') === region);
   }
+
+  // emailType: 'work' (default) | 'personal' | 'all'
+  if (emailType === 'personal') {
+    jobs = jobs.filter(j => j.isPersonal);
+  } else if (emailType === 'work') {
+    jobs = jobs.filter(j => !j.isPersonal);
+  }
+  // 'all' or undefined → show both
 
   if (date) {
     const days = parseInt(date, 10);
@@ -1860,6 +1900,8 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
   let pending = jobs.filter(j => {
     if (!j.email) return false;
     if (bouncedEmails.has(j.email.toLowerCase())) return false; // skip known-bad addresses
+    // Skip personal emails (gmail/yahoo/hotmail) — opt in via ?includePersonal=true
+    if (req.query.includePersonal !== 'true' && isPersonalEmail(j.email)) return false;
     const key = `${j.email}|||${(j.title || '').toLowerCase()}`;
     return !sentKeys.has(key);
   });

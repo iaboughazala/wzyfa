@@ -315,6 +315,20 @@
     .region-immigration { background: rgba(168,85,247,0.18); color: var(--purple); }
     .region-remote { background: rgba(6,182,212,0.18); color: var(--cyan); }
 
+    .email-type-badge {
+      display: inline-block;
+      padding: 0.12rem 0.35rem;
+      margin-right: 0.3rem;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      vertical-align: middle;
+    }
+    .email-type-personal { background: rgba(245,158,11,0.2); color: var(--orange); }
+    .email-type-work { background: rgba(34,197,94,0.15); color: var(--green); }
+    tr.row-personal { opacity: 0.75; }
+    tr.row-personal:hover { opacity: 1; }
+
     .status-badge {
       display: inline-block;
       padding: 0.25rem 0.6rem;
@@ -881,6 +895,11 @@
         <option value="immigration">✈️ فرص هجرة (Visa Sponsorship)</option>
         <option value="remote">🌐 ريموت عالمي</option>
       </select>
+      <select id="emailTypeFilter" title="نوع الإيميل">
+        <option value="work">🏢 إيميلات شركات فقط (افتراضي)</option>
+        <option value="all">📧 الكل (شركات + شخصية)</option>
+        <option value="personal">👤 شخصية فقط (Gmail/Yahoo/Hotmail)</option>
+      </select>
       <select id="dateFilter">
         <option value="">الكل - التاريخ</option>
         <option value="1">24 ساعة</option>
@@ -1031,6 +1050,7 @@ Best regards,
     const searchInput = document.getElementById('searchInput');
     const countryFilter = document.getElementById('countryFilter');
     const regionFilter = document.getElementById('regionFilter');
+    const emailTypeFilter = document.getElementById('emailTypeFilter');
     const dateFilter = document.getElementById('dateFilter');
     const jobsBody = document.getElementById('jobsBody');
     const resultsCount = document.getElementById('resultsCount');
@@ -1527,11 +1547,13 @@ Best regards,
         const q = searchInput.value.trim();
         const country = countryFilter.value;
         const region = regionFilter.value;
+        const emailType = emailTypeFilter.value;
         const date = dateFilter.value;
 
         if (q) params.set('q', q);
         if (country !== 'all') params.set('country', country);
         if (region !== 'all') params.set('region', region);
+        if (emailType) params.set('emailType', emailType);
         if (date) params.set('date', date);
 
         const res = await fetch('/api/email-jobs?' + params.toString());
@@ -1631,12 +1653,17 @@ Best regards,
         };
         const regionBadge = `<span class="region-badge region-${region}">${regionLabels[region] || '🏢 محلي'}</span>`;
 
-        return `<tr class="${rowClass}">
+        const personalBadge = job.isPersonal
+          ? `<span class="email-type-badge email-type-personal" title="إيميل شخصي — لن يتم الإرسال إليه">👤 شخصي</span>`
+          : '';
+        const finalRowClass = isSent ? rowClass : (job.isPersonal ? 'row-personal' : '');
+
+        return `<tr class="${finalRowClass}">
           <td>${statusBadge}</td>
           <td>${regionBadge}</td>
           <td>${titleHtml}</td>
           <td class="company-name">${company}</td>
-          <td class="email-text">${email}</td>
+          <td class="email-text">${personalBadge}${email}</td>
           <td class="location-text hide-mobile">${location}</td>
           <td><span class="source-badge ${sourceClass}">${escapeHtml(job.source || '?')}</span></td>
           <td class="date-text hide-mobile">${dateStr}</td>
@@ -1709,7 +1736,7 @@ Best regards,
     });
 
     // Filter change listeners
-    [countryFilter, regionFilter, dateFilter].forEach(el => {
+    [countryFilter, regionFilter, emailTypeFilter, dateFilter].forEach(el => {
       el.addEventListener('change', () => fetchJobs());
     });
 
