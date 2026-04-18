@@ -1801,18 +1801,24 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
       (j.location || '').toLowerCase().includes(wantedCountry)
     );
   }
-  if (req.query.priority) {
-    const priorityList = String(req.query.priority).toLowerCase().split(',').map(s => s.trim());
-    // Sort: priority regions first (in order given), others last
-    pending = pending.slice().sort((a, b) => {
-      const ar = (a.region || 'gulf').toLowerCase();
-      const br = (b.region || 'gulf').toLowerCase();
-      const ai = priorityList.indexOf(ar);
-      const bi = priorityList.indexOf(br);
-      const aRank = ai === -1 ? 999 : ai;
-      const bRank = bi === -1 ? 999 : bi;
-      return aRank - bRank;
-    });
+  // Default priority: immigration → remote → gulf (unless region filter set)
+  // User can override with ?priority=... or ?priority=none to disable
+  if (!req.query.region) {
+    const raw = req.query.priority;
+    if (raw !== 'none') {
+      const priorityList = raw
+        ? String(raw).toLowerCase().split(',').map(s => s.trim())
+        : ['immigration', 'remote', 'gulf'];
+      pending = pending.slice().sort((a, b) => {
+        const ar = (a.region || 'gulf').toLowerCase();
+        const br = (b.region || 'gulf').toLowerCase();
+        const ai = priorityList.indexOf(ar);
+        const bi = priorityList.indexOf(br);
+        const aRank = ai === -1 ? 999 : ai;
+        const bRank = bi === -1 ? 999 : bi;
+        return aRank - bRank;
+      });
+    }
   }
 
   // Test mode: ?test=EMAIL sends to user's own email (first job's content)

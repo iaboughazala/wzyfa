@@ -759,14 +759,14 @@
           <h3>&#127919; اختر الأولوية</h3>
           <div style="background:var(--bg-input); border:1px solid var(--border); padding:0.75rem; border-radius:8px; margin-bottom:0.75rem;">
             <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
-              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="" checked onchange="updatePsCommand()"> الكل (بالترتيب الافتراضي)</label>
+              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="" checked onchange="updatePsCommand()"> ⭐ الافتراضي: هجرة → ريموت → خليج</label>
               <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="region=immigration" onchange="updatePsCommand()"> ✈️ فرص الهجرة فقط</label>
               <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="region=remote" onchange="updatePsCommand()"> 🌐 ريموت فقط</label>
               <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="region=gulf" onchange="updatePsCommand()"> 🏢 خليج فقط</label>
-              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="priority=immigration,remote" onchange="updatePsCommand()"> 🎯 هجرة/ريموت أولاً، ثم الباقي</label>
+              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="priority=none" onchange="updatePsCommand()"> 📋 الكل بترتيب ما اتسحبت</label>
             </div>
             <div style="color:var(--text-dim); font-size:0.72rem; margin-top:0.5rem;">
-              &#128161; الفلترة تحصل قبل تطبيق الحد اليومي — لو اخترت "هجرة فقط" وعدد الهجرة أقل من حد اليوم، هيبعت اللي موجود بس.
+              &#128161; الخيار الافتراضي يبعت <strong style="color:var(--purple)">فرص الهجرة أولاً</strong>، بعدها الريموت، ثم الخليج — مفيد لما يكون حد اليوم أقل من عدد فرص الهجرة المتاحة.
             </div>
           </div>
           <style>
