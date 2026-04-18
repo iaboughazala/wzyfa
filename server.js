@@ -263,15 +263,32 @@ function detectWorkMode(text) {
 
 function detectCountry(text) {
   const t = (text || '').toLowerCase();
+  // Gulf region
   if (t.includes('saudi') || t.includes('riyadh') || t.includes('jeddah') || t.includes('ksa') || t.includes('dammam')) return 'Saudi Arabia';
   if (t.includes('dubai') || t.includes('uae') || t.includes('abu dhabi') || t.includes('emirates') || t.includes('sharjah')) return 'UAE';
   if (t.includes('qatar') || t.includes('doha')) return 'Qatar';
-  if (t.includes('egypt') || t.includes('cairo')) return 'Egypt';
   if (t.includes('bahrain') || t.includes('manama')) return 'Bahrain';
   if (t.includes('kuwait')) return 'Kuwait';
   if (t.includes('oman') || t.includes('muscat')) return 'Oman';
+  // MENA
+  if (t.includes('egypt') || t.includes('cairo')) return 'Egypt';
   if (t.includes('jordan') || t.includes('amman')) return 'Jordan';
-  if (t.includes('remote')) return 'Remote';
+  // Europe
+  if (t.includes('germany') || t.includes('berlin') || t.includes('munich') || t.includes('frankfurt') || t.includes('hamburg')) return 'Germany';
+  if (t.includes('netherlands') || t.includes('amsterdam') || t.includes('rotterdam') || t.includes('the hague')) return 'Netherlands';
+  if (t.includes('ireland') || t.includes('dublin') || t.includes('cork')) return 'Ireland';
+  if (t.includes('united kingdom') || t.includes(' uk ') || t.includes('london') || t.includes('manchester') || t.includes('birmingham')) return 'United Kingdom';
+  if (t.includes('sweden') || t.includes('stockholm') || t.includes('gothenburg')) return 'Sweden';
+  if (t.includes('france') || t.includes('paris')) return 'France';
+  if (t.includes('switzerland') || t.includes('zurich') || t.includes('geneva')) return 'Switzerland';
+  // North America
+  if (t.includes('canada') || t.includes('toronto') || t.includes('vancouver') || t.includes('montreal') || t.includes('calgary') || t.includes('ottawa')) return 'Canada';
+  if (t.includes(' usa ') || t.includes('united states') || t.includes('new york') || t.includes('san francisco') || t.includes('seattle') || t.includes('chicago') || t.includes('boston') || t.includes('texas') || t.includes('california')) return 'USA';
+  // Oceania
+  if (t.includes('australia') || t.includes('sydney') || t.includes('melbourne') || t.includes('brisbane') || t.includes('perth')) return 'Australia';
+  if (t.includes('new zealand') || t.includes('auckland') || t.includes('wellington')) return 'New Zealand';
+  // Remote
+  if (t.includes('remote') || t.includes('worldwide') || t.includes('work from anywhere') || t.includes('anywhere in the world')) return 'Remote';
   return '';
 }
 
@@ -809,7 +826,31 @@ const EMAIL_SEARCH_QUERIES_AR = [
   '"مطلوب" AND "ايميل" OR "البريد الالكتروني"',
 ];
 
+// Gulf region (local jobs)
 const EMAIL_SEARCH_LOCATIONS = ['Saudi Arabia', 'UAE', 'Dubai', 'Qatar'];
+
+// Immigration-friendly countries (visa sponsorship common for transformation/PM roles)
+const IMMIGRATION_LOCATIONS = [
+  'Germany', 'Netherlands', 'Ireland', 'United Kingdom',
+  'Canada', 'Australia', 'New Zealand', 'Sweden'
+];
+
+// Visa-sponsorship-focused search queries (combined with keywords + location)
+const VISA_SEARCH_QUERIES = [
+  '"visa sponsorship" "send CV" OR "email resume"',
+  '"relocation package" "send your CV" OR "apply via email"',
+  '"work permit provided" OR "sponsor visa" CV email',
+  '"international candidates welcome" "send CV"',
+];
+
+// Remote / worldwide job queries
+const REMOTE_SEARCH_QUERIES = [
+  '"remote" "send CV to" OR "email your CV"',
+  '"work from anywhere" "send your resume"',
+  '"100% remote" "apply by email" OR "submit CV"',
+  '"fully remote" "worldwide" "send CV"',
+  '"remote" "transformation" OR "ERP" "send your CV to"',
+];
 
 // ─── Source: Google Search for Email Jobs ───
 async function fetchGoogleEmailJobs(browser) {
@@ -820,18 +861,38 @@ async function fetchGoogleEmailJobs(browser) {
     page = await setupPage(browser);
 
     const allQueries = [];
+
+    // 1. Gulf region jobs (local)
     for (const q of [...EMAIL_SEARCH_QUERIES_EN, ...EMAIL_SEARCH_QUERIES_AR]) {
       for (const loc of EMAIL_SEARCH_LOCATIONS) {
         for (const kw of TOP5_KEYWORDS) {
-          allQueries.push(`${kw} ${loc} ${q}`);
+          allQueries.push({ q: `${kw} ${loc} ${q}`, region: 'gulf', country: loc });
         }
       }
     }
 
-    // Limit to avoid rate limiting — pick a subset
-    const queries = allQueries.slice(0, 20);
+    // 2. Immigration-friendly countries with visa sponsorship keywords
+    for (const vq of VISA_SEARCH_QUERIES) {
+      for (const loc of IMMIGRATION_LOCATIONS) {
+        for (const kw of TOP5_KEYWORDS) {
+          allQueries.push({ q: `${kw} ${loc} ${vq}`, region: 'immigration', country: loc });
+        }
+      }
+    }
 
-    for (const query of queries) {
+    // 3. Remote / worldwide jobs (no location)
+    for (const rq of REMOTE_SEARCH_QUERIES) {
+      for (const kw of TOP5_KEYWORDS) {
+        allQueries.push({ q: `${kw} ${rq}`, region: 'remote', country: 'Remote' });
+      }
+    }
+
+    // Shuffle and limit — spread across all three categories proportionally
+    const shuffled = allQueries.sort(() => Math.random() - 0.5);
+    const queries = shuffled.slice(0, 35);
+
+    for (const queryObj of queries) {
+      const query = queryObj.q;
       try {
         const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`;
         await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -859,14 +920,16 @@ async function fetchGoogleEmailJobs(browser) {
           if (emails.length === 0) continue;
 
           for (const email of emails) {
+            const detectedCountry = detectCountry(fullText) || queryObj.country;
             jobs.push({
               title: r.title || extractJobTitleFromText(fullText),
               company: extractCompanyFromText(fullText),
               email,
-              location: EMAIL_SEARCH_LOCATIONS.find(loc => fullText.toLowerCase().includes(loc.toLowerCase())) || '',
+              location: queryObj.country || detectedCountry,
               url: r.url || '',
               source: 'Google',
-              country: detectCountry(fullText),
+              country: detectedCountry,
+              region: queryObj.region, // 'gulf' | 'immigration' | 'remote'
               postedDate: new Date().toISOString(),
               scrapedAt: new Date().toISOString()
             });
@@ -1240,7 +1303,7 @@ app.get('/email-jobs', (req, res) => {
 // Email Jobs API with filters
 app.get('/api/email-jobs', (req, res) => {
   let jobs = loadEmailJobs();
-  const { q, country, date } = req.query;
+  const { q, country, date, region } = req.query;
 
   if (q) {
     const search = q.toLowerCase();
@@ -1257,6 +1320,10 @@ app.get('/api/email-jobs', (req, res) => {
       (j.country || '').toLowerCase().includes(c) ||
       (j.location || '').toLowerCase().includes(c)
     );
+  }
+
+  if (region && region !== 'all') {
+    jobs = jobs.filter(j => (j.region || 'gulf') === region);
   }
 
   if (date) {
