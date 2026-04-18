@@ -17,7 +17,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const JOBS_FILE = path.join(DATA_DIR, 'jobs.json');
 const MAX_JOBS = 500;
 const EMAIL_JOBS_FILE = path.join(DATA_DIR, 'email-jobs.json');
-const MAX_EMAIL_JOBS = 2000;
+// No cap — keep every unique job found, never delete
 const SENT_FILE = path.join(DATA_DIR, 'sent-emails.json');
 const SMTP_CONFIG_FILE = path.join(DATA_DIR, 'smtp-config.json');
 const CV_DIR = path.join(DATA_DIR, 'cv');
@@ -353,7 +353,8 @@ function deduplicateEmailJobs(jobs) {
       seen.set(key, job);
     }
   }
-  return Array.from(seen.values()).slice(0, MAX_EMAIL_JOBS);
+  // No slice — keep ALL unique jobs, never discard
+  return Array.from(seen.values());
 }
 
 function extractEmails(text) {
