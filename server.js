@@ -190,28 +190,65 @@ let emailLastScan = null;
 
 // ─── Keywords & Locations ───
 const ALL_KEYWORDS = [
+  // Leadership — Transformation & Excellence
   'Digital Transformation Lead',
-  'Business Excellence Manager',
-  'Business Excellence Lead',
+  'Digital Transformation Manager',
   'Transformation Manager',
   'Transformation Lead',
   'Enterprise Transformation Lead',
+  'Transformation Director',
   'Strategy and Transformation Manager',
+  'Business Excellence Manager',
+  'Business Excellence Lead',
+  'Business Excellence Director',
+  'Operations Director Transformation',
+  // Program / PMO
   'Program Manager',
   'PMO Manager',
+  'Head of PMO',
   'Senior Project Manager Transformation',
   'Senior Project Manager ERP',
+  // Product
   'Product Owner Enterprise',
   'Product Owner ERP',
   'Digital Product Lead',
   'Solution Lead',
-  'Transformation Director',
-  'Business Excellence Director',
-  'Operations Director Transformation',
-  'Digital Transformation Manager'
+  // Analysts & Consultants (newly added)
+  'Senior Business Analyst',
+  'Business Analyst',
+  'Lead Business Analyst',
+  'ERP Business Analyst',
+  'System Analyst',
+  'Systems Analyst',
+  'Process Analyst',
+  'Requirements Analyst',
+  'Functional Consultant',
+  'ERP Consultant',
+  'SAP Consultant',
+  'Oracle ERP Consultant',
+  'Management Consultant',
+  'Transformation Consultant',
+  'Digital Transformation Consultant',
+  // Architecture
+  'Solution Architect',
+  'Enterprise Architect',
+  // Change
+  'Change Manager',
+  'Organizational Change Manager'
 ];
 
-const TOP5_KEYWORDS = ALL_KEYWORDS.slice(0, 5);
+// Used for email-job scans (Google queries) — most senior/hireable + key analyst roles.
+// Kept relatively small to avoid Google rate limits.
+const TOP5_KEYWORDS = [
+  'Digital Transformation Lead',
+  'Business Excellence Manager',
+  'Transformation Manager',
+  'Senior Business Analyst',
+  'ERP Consultant',
+  'Solution Architect',
+  'Change Manager',
+  'PMO Manager'
+];
 
 const LOCATIONS = [
   { label: 'Saudi Arabia', query: 'Saudi Arabia', indeedL: 'Saudi+Arabia', gulfCountry: 'saudi-arabia' },
