@@ -2179,59 +2179,117 @@ app.get('/api/send-cv/scan-bounces', (req, res) => {
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Wzyfa - Outlook Bounce Scanner" -ForegroundColor Cyan
+Write-Host "  Wzyfa - Outlook Bounce Scanner v2" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan ; Write-Host ""
 
 Write-Host "Connecting to Outlook..." -ForegroundColor Yellow
 try {
   $Outlook = New-Object -ComObject Outlook.Application
   $ns = $Outlook.GetNamespace("MAPI")
-  $inbox = $ns.GetDefaultFolder(6)  # olFolderInbox
-  Write-Host "Connected to inbox: $($inbox.Items.Count) messages" -ForegroundColor Green
 } catch {
   Write-Host "ERROR: Could not connect to Outlook. $_" -ForegroundColor Red
   return
 }
 
-Write-Host "Scanning for bounce notifications..." -ForegroundColor Yellow
-$items = $inbox.Items
-$items.Sort("[ReceivedTime]", $true)
-
 $myEmail = '${smtpUser}'.ToLower()
 $bouncedEmails = New-Object System.Collections.Generic.HashSet[string]
 $ndrCount = 0
-$scanned = 0
+$scannedTotal = 0
+$sampleSubjects = New-Object System.Collections.Generic.List[string]
 
-foreach ($item in $items) {
-  $scanned++
-  if ($scanned -gt 500) { break }  # Only scan last 500 messages
+# Folders to scan: Inbox (6), Junk Email (23), Deleted Items (3)
+$foldersToScan = @(
+  @{ Id = 6; Name = 'Inbox' },
+  @{ Id = 23; Name = 'Junk Email' }
+)
+
+foreach ($folderDef in $foldersToScan) {
   try {
-    if ($item.Class -ne 43) { continue }  # olMail = 43
-    $subj = if ($item.Subject) { $item.Subject } else { '' }
-    $from = if ($item.SenderEmailAddress) { $item.SenderEmailAddress.ToLower() } else { '' }
+    $folder = $ns.GetDefaultFolder($folderDef.Id)
+    Write-Host "Scanning $($folderDef.Name): $($folder.Items.Count) messages..." -ForegroundColor Yellow
+    $items = $folder.Items
+    try { $items.Sort("[ReceivedTime]", $true) } catch {}
 
-    # Is this a Non-Delivery Report?
-    $isNDR = $false
-    if ($subj -match 'Undeliverable|Delivery (has )?[Ff]ailed|delivery failure|Returned mail|failed delivery|Mail [Dd]elivery (Failed|Subsystem)|Delivery Status Notification') { $isNDR = $true }
-    if ($from -match 'postmaster|mailer-daemon|mail\\.protection\\.outlook|bounces?@|noreply.*delivery') { $isNDR = $true }
-    if (-not $isNDR) { continue }
+    $folderScanned = 0
+    foreach ($item in $items) {
+      $folderScanned++
+      $scannedTotal++
+      if ($folderScanned -gt 2000) { break }  # cap per folder
 
-    $ndrCount++
-    $body = if ($item.Body) { $item.Body } else { '' }
-    # Extract email addresses from the NDR body
-    $regex = [regex]'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}'
-    $found = $regex.Matches($body)
-    foreach ($m in $found) {
-      $addr = $m.Value.ToLower()
-      # Skip system/infrastructure addresses
-      if ($addr -match 'microsoft\\.com$|outlook\\.com$|hotmail\\.com$|live\\.com$|protection\\.outlook|prod\\.outlook|arcselector|selector1|dkim|ppe-hosted|mimecast|emailsrvr|googlemail|gmail\\.com$|postmaster|mailer-daemon|noreply|no-reply') { continue }
-      if ($addr -eq $myEmail) { continue }
-      $null = $bouncedEmails.Add($addr)
+      try {
+        # MessageClass is the reliable way to identify NDRs:
+        #   REPORT.IPM.Note.NDR        = Non-Delivery Report
+        #   REPORT.IPM.Note.DR         = Delivery Report
+        #   REPORT.IPM.Note.IPNNRN     = Non-Read Report
+        $mc = ''
+        try { $mc = $item.MessageClass } catch {}
+
+        $subj = ''
+        try { $subj = if ($item.Subject) { $item.Subject } else { '' } } catch {}
+
+        $from = ''
+        try { $from = if ($item.SenderEmailAddress) { $item.SenderEmailAddress.ToLower() } else { '' } } catch {}
+
+        # Detect NDR by multiple signals
+        $isNDR = $false
+        if ($mc -match '^REPORT\\.IPM\\.Note\\.NDR') { $isNDR = $true }
+        if ($mc -match 'REPORT.*NDR') { $isNDR = $true }
+        if ($subj -match 'Undeliverable|Delivery (has )?[Ff]ailed|delivery failure|Returned mail|failed delivery|Mail [Dd]elivery (Failed|Subsystem)|Delivery Status Notification|could not be delivered|message wasn''t delivered|message couldn''t be delivered') { $isNDR = $true }
+        if ($from -match 'postmaster|mailer-daemon|mail\\.protection\\.outlook|bounces?@|noreply.*delivery|^$') {
+          # If from is empty or system, check subject/body more carefully
+          if ($from -match 'postmaster|mailer-daemon|mail\\.protection\\.outlook|bounces?@') { $isNDR = $true }
+        }
+
+        if (-not $isNDR) { continue }
+
+        $ndrCount++
+        if ($sampleSubjects.Count -lt 5) { $sampleSubjects.Add("[$mc] $subj") }
+
+        # Try to get body — could be in Body, HTMLBody, or HeaderMessage
+        $body = ''
+        try { $body = if ($item.Body) { $item.Body } else { '' } } catch {}
+        if ($body.Length -lt 100) {
+          try { $body += if ($item.HTMLBody) { $item.HTMLBody } else { '' } } catch {}
+        }
+
+        # Extract email addresses from the NDR body
+        $regex = [regex]'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}'
+        $found = $regex.Matches($body)
+        foreach ($m in $found) {
+          $addr = $m.Value.ToLower()
+          # Skip system/infrastructure addresses
+          if ($addr -match 'microsoft\\.com$|outlook\\.com$|hotmail\\.com$|live\\.com$|protection\\.outlook|prod\\.outlook|arcselector|selector1|dkim|ppe-hosted|mimecast|emailsrvr|googlemail|gmail\\.com$|yahoo\\.com$|aol\\.com$|postmaster|mailer-daemon|noreply|no-reply|\\.png$|\\.jpg$') { continue }
+          if ($addr -eq $myEmail) { continue }
+          $null = $bouncedEmails.Add($addr)
+        }
+
+        # Also try to get the original recipient from Recipients collection or OriginalRecipient
+        try {
+          if ($item.Recipients) {
+            foreach ($r in $item.Recipients) {
+              $rAddr = ''
+              try { $rAddr = $r.Address.ToLower() } catch {}
+              if ($rAddr -and $rAddr -notmatch 'microsoft\\.com|outlook\\.com|hotmail\\.com|protection|selector' -and $rAddr -ne $myEmail) {
+                $null = $bouncedEmails.Add($rAddr)
+              }
+            }
+          }
+        } catch {}
+      } catch { continue }
     }
-  } catch { continue }
+    Write-Host "  ...scanned $folderScanned in $($folderDef.Name)" -ForegroundColor DarkGray
+  } catch {
+    Write-Host "  (could not access folder $($folderDef.Name): $_)" -ForegroundColor DarkGray
+  }
 }
 
-Write-Host "Scanned $scanned messages, found $ndrCount NDR messages" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Total scanned: $scannedTotal messages across all folders" -ForegroundColor Cyan
+Write-Host "Found $ndrCount NDR messages" -ForegroundColor Cyan
+if ($sampleSubjects.Count -gt 0) {
+  Write-Host "Sample NDR subjects:" -ForegroundColor DarkCyan
+  foreach ($s in $sampleSubjects) { Write-Host "  -> $s" -ForegroundColor DarkGray }
+}
 Write-Host "Unique bounced addresses: $($bouncedEmails.Count)" -ForegroundColor Cyan
 
 if ($bouncedEmails.Count -eq 0) {
