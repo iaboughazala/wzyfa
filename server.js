@@ -1641,6 +1641,16 @@ Best regards`;
 # ============================================
 
 $ErrorActionPreference = "Continue"
+
+# Prevent system sleep during the session (auto-reverts when script ends)
+try {
+  Add-Type -Namespace WzyfaKeepAwake -Name Api -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);' -ErrorAction SilentlyContinue
+  [WzyfaKeepAwake.Api]::SetThreadExecutionState(0x80000041) | Out-Null
+  Write-Host "[Keep-awake] System sleep disabled for this session" -ForegroundColor DarkGreen
+} catch {
+  Write-Host "[Keep-awake] Could not disable sleep." -ForegroundColor DarkYellow
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Wzyfa — Outlook Auto-Send CV" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -1742,6 +1752,9 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 # Cleanup
 Remove-Item $CvFolder -Recurse -Force -ErrorAction SilentlyContinue
+
+# Restore normal sleep behavior
+try { [WzyfaKeepAwake.Api]::SetThreadExecutionState(0x80000000) | Out-Null } catch {}
 
 Read-Host "Press Enter to exit"
 `;
@@ -1869,6 +1882,17 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
 # Fix Arabic encoding for console and outgoing data
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+# Prevent system sleep during the session (auto-reverts when script ends)
+try {
+  Add-Type -Namespace WzyfaKeepAwake -Name Api -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);' -ErrorAction SilentlyContinue
+  # ES_CONTINUOUS (0x80000000) + ES_SYSTEM_REQUIRED (0x1) + ES_AWAYMODE_REQUIRED (0x40)
+  [WzyfaKeepAwake.Api]::SetThreadExecutionState(0x80000041) | Out-Null
+  Write-Host "[Keep-awake] System sleep disabled for this session" -ForegroundColor DarkGreen
+} catch {
+  Write-Host "[Keep-awake] Could not disable sleep. Keep your laptop plugged in and lid open." -ForegroundColor DarkYellow
+}
+
 Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Wzyfa - Outlook Auto-Send CV" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -1931,6 +1955,9 @@ foreach ($Job in $Jobs) {
 
 Write-Host "" ; Write-Host "Complete! Sent: $Sent | Failed: $Failed" -ForegroundColor Cyan
 Remove-Item $CvFolder -Recurse -Force -ErrorAction SilentlyContinue
+
+# Restore normal sleep behavior
+try { [WzyfaKeepAwake.Api]::SetThreadExecutionState(0x80000000) | Out-Null } catch {}
 `;
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
