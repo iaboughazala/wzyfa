@@ -1004,6 +1004,19 @@ Best regards,
         <button class="btn btn-secondary" onclick="closeSettings()">إغلاق</button>
       </div>
       <div class="status-msg" id="smtpStatus"></div>
+
+      <h3>&#128681; إدارة الإيميلات المرتدة (Bounces)</h3>
+      <div style="color:var(--text-muted); font-size:0.85rem; margin-bottom:0.5rem;">
+        لما يجيلك إيميل "Delivery Failed" من Outlook، الصق <strong>نص الرسالة كاملاً</strong> هنا — النظام يستخرج العناوين تلقائياً ومش يرسل ليها تاني.
+      </div>
+      <div class="form-group">
+        <textarea id="bounceText" placeholder="الصق نص رسالة الـ bounce كاملاً هنا..." style="min-height:100px; font-family:monospace; font-size:0.8rem;"></textarea>
+      </div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <button class="btn" onclick="submitBounces()" style="background:var(--red);">&#128681; حفظ كـ Bounce</button>
+        <span class="cv-info" id="bounceCount">تم حظر 0 إيميل</span>
+      </div>
+      <div class="status-msg" id="bounceStatus"></div>
     </div>
   </div>
 
@@ -1054,6 +1067,7 @@ Best regards,
       document.getElementById('settingsOverlay').classList.add('show');
       loadSmtpConfig();
       loadCVInfo();
+      loadBounceCount();
     }
 
     function closeSettings() {
@@ -1175,6 +1189,40 @@ Best regards,
         status.className = 'status-msg err';
         status.textContent = 'خطأ في الرفع';
       }
+    }
+
+    async function submitBounces() {
+      const text = document.getElementById('bounceText').value.trim();
+      const status = document.getElementById('bounceStatus');
+      if (!text) {
+        status.className = 'status-msg err';
+        status.textContent = 'الصق نص رسالة الـ bounce أولاً';
+        return;
+      }
+      try {
+        const res = await fetch('/api/send-cv/mark-bounced-bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        status.className = 'status-msg ok';
+        status.textContent = `تم حظر ${data.added} إيميل جديد. إجمالي المحظور: ${data.totalBounced}`;
+        document.getElementById('bounceText').value = '';
+        loadBounceCount();
+      } catch (e) {
+        status.className = 'status-msg err';
+        status.textContent = 'خطأ: ' + e.message;
+      }
+    }
+
+    async function loadBounceCount() {
+      try {
+        const res = await fetch('/api/send-cv/bounced');
+        const data = await res.json();
+        const el = document.getElementById('bounceCount');
+        if (el) el.textContent = `تم حظر ${data.total} إيميل من الإرسال مستقبلاً`;
+      } catch (e) {}
     }
 
     async function loadCVInfo() {

@@ -388,6 +388,57 @@ function extractEmails(text) {
   });
 }
 
+// Check if a job title/snippet actually relates to the user's target roles
+// Rejects obviously off-topic jobs (plumbers, drivers, nurses, etc.)
+function isRelevantJob(title, snippet) {
+  const text = `${title || ''} ${snippet || ''}`.toLowerCase();
+  if (!text.trim()) return false;
+
+  // Must contain at least one target keyword or related term
+  const relevantTerms = [
+    'transformation', 'digital', 'erp', 'sap', 'oracle', 'odoo', 'dynamics', 'zoho',
+    'business analyst', ' ba ', 'business analysis', 'system analyst', 'systems analyst',
+    'consultant', 'consulting',
+    'project manager', 'program manager', 'pmo', 'product owner', 'product manager',
+    'solution architect', 'enterprise architect', 'solutions architect',
+    'governance', 'excellence',
+    'change manager', 'change management', 'organizational change',
+    'process', 'operations director', 'head of operations',
+    'salesforce', 'functional consultant', 'requirements analyst',
+    'scrum master', 'agile coach',
+    'data analyst', 'business intelligence',
+    'director of', 'head of technology', 'cto', 'chief digital', 'chief transformation'
+  ];
+  const hasRelevant = relevantTerms.some(t => text.includes(t));
+  if (!hasRelevant) return false;
+
+  // Reject obviously off-topic blue-collar / unrelated roles
+  const offTopicTerms = [
+    'plumber', 'plumbing', 'electrician', 'carpenter', 'painter', 'welder',
+    'driver', 'chauffeur', 'truck driver', 'delivery driver',
+    'nurse', 'nursing', 'midwife', 'caregiver', 'nanny', 'babysit',
+    'cleaner', 'cleaning', 'housekeep', 'maid',
+    'cook', 'chef', 'waiter', 'waitress', 'barista', 'bartender', 'kitchen helper',
+    'security guard', 'watchman', 'doorman',
+    'construction worker', 'laborer', 'labourer', 'mason', 'bricklayer',
+    'farmer', 'farm worker', 'gardener', 'landscaper',
+    'mechanic', 'auto repair', 'tire fitter',
+    'hairdresser', 'barber', 'beautician', 'manicurist',
+    'truck', 'forklift', 'warehouse worker',
+    'teacher of english', 'esl teacher', 'primary school',
+    'tailor', 'seamstress',
+    'embassy ', // rejects things like "Embassy job opportunity"
+    'visa agent', 'immigration agent',
+    'sales representative', 'sales rep', 'sales agent',
+    'call center agent', 'customer service representative',
+    'plumbers with', 'carpenters with', 'drivers with' // group-hiring spam patterns
+  ];
+  const hasOffTopic = offTopicTerms.some(t => text.includes(t));
+  if (hasOffTopic) return false;
+
+  return true;
+}
+
 function cleanJobTitle(title) {
   if (!title) return '';
   let t = String(title);
@@ -977,6 +1028,9 @@ async function fetchGoogleEmailJobs(browser) {
           const emails = extractEmails(fullText);
           if (emails.length === 0) continue;
 
+          // Reject off-topic jobs before saving
+          if (!isRelevantJob(r.title, r.snippet)) continue;
+
           for (const email of emails) {
             const detectedCountry = detectCountry(fullText) || queryObj.country;
             jobs.push({
@@ -1047,6 +1101,7 @@ async function fetchTwitterEmailJobs(browser) {
         for (const tweetText of tweets) {
           const emails = extractEmails(tweetText);
           if (emails.length === 0) continue;
+          if (!isRelevantJob(extractJobTitleFromText(tweetText), tweetText)) continue;
 
           for (const email of emails) {
             jobs.push({
@@ -1123,6 +1178,7 @@ async function fetchBaytEmailJobs(browser) {
             const pageText = await page.evaluate(() => document.body.innerText);
             const emails = extractEmails(pageText);
             if (emails.length === 0) continue;
+            if (!isRelevantJob(r.title || extractJobTitleFromText(pageText), pageText)) continue;
 
             for (const email of emails) {
               jobs.push({
@@ -1792,9 +1848,12 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
 
   const jobs = loadEmailJobs();
   const sent = loadSentEmails();
+  const bounced = loadBounced();
   const sentKeys = new Set(sent.map(s => s.key));
+  const bouncedEmails = new Set(bounced.map(b => b.email.toLowerCase()));
   let pending = jobs.filter(j => {
     if (!j.email) return false;
+    if (bouncedEmails.has(j.email.toLowerCase())) return false; // skip known-bad addresses
     const key = `${j.email}|||${(j.title || '').toLowerCase()}`;
     return !sentKeys.has(key);
   });
@@ -1962,6 +2021,63 @@ try { [WzyfaKeepAwake.Api]::SetThreadExecutionState(0x80000000) | Out-Null } cat
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(script);
+});
+
+// Mark an email as bounced (invalid address) — won't be sent again + hidden from list
+const BOUNCED_FILE = path.join(DATA_DIR, 'bounced-emails.json');
+function loadBounced() {
+  try { if (fs.existsSync(BOUNCED_FILE)) return JSON.parse(fs.readFileSync(BOUNCED_FILE, 'utf-8')); } catch (e) {}
+  return [];
+}
+function saveBounced(list) {
+  fs.writeFileSync(BOUNCED_FILE, JSON.stringify(list, null, 2), 'utf-8');
+}
+
+app.post('/api/send-cv/mark-bounced', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const bounced = loadBounced();
+  const e = email.toLowerCase().trim();
+  if (!bounced.some(b => b.email === e)) {
+    bounced.push({ email: e, bouncedAt: new Date().toISOString() });
+    saveBounced(bounced);
+  }
+  res.json({ ok: true, total: bounced.length });
+});
+
+app.get('/api/send-cv/bounced', (req, res) => {
+  const bounced = loadBounced();
+  res.json({ total: bounced.length, bounced });
+});
+
+// Paste bounce email TEXT (from the NDR email body) and auto-extract addresses
+app.post('/api/send-cv/mark-bounced-bulk', (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: 'text required' });
+  // Extract email addresses from the bounce text
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const foundEmails = [...new Set((text.match(emailRegex) || []).map(e => e.toLowerCase()))];
+  // Filter out Microsoft/system addresses
+  const ignoreDomains = [
+    'outlook.com', 'microsoft.com', 'hotmail.com', 'prod.outlook.com',
+    'mail.protection.outlook.com', 'ppe-hosted.com', 'eurp194.prod.outlook.com',
+    'emailsrvr.com', 'google.com', 'gmail.com',
+  ];
+  const candidates = foundEmails.filter(e => {
+    const domain = e.split('@')[1] || '';
+    return !ignoreDomains.some(d => domain.endsWith(d));
+  });
+
+  const bounced = loadBounced();
+  let added = 0;
+  for (const e of candidates) {
+    if (!bounced.some(b => b.email === e)) {
+      bounced.push({ email: e, bouncedAt: new Date().toISOString() });
+      added++;
+    }
+  }
+  saveBounced(bounced);
+  res.json({ ok: true, added, emails: candidates, totalBounced: bounced.length });
 });
 
 // Unmark email as sent (useful after accidental send or if test went to wrong address)
