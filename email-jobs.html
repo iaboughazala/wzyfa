@@ -1025,11 +1025,26 @@ Best regards,
       <div class="status-msg" id="smtpStatus"></div>
 
       <h3>&#128681; إدارة الإيميلات المرتدة (Bounces)</h3>
+
+      <div style="background:rgba(59,130,246,0.08); border:1px solid var(--accent); padding:0.75rem; border-radius:8px; margin-bottom:0.75rem;">
+        <strong style="color:var(--accent);">&#128269; فحص تلقائي من Outlook Inbox</strong>
+        <div style="color:var(--text-muted); font-size:0.82rem; margin:0.4rem 0;">
+          السكريبت ده يفحص آخر 500 رسالة في الـ Inbox، يستخرج كل الـ bounces ويضيفها للـ blacklist تلقائياً.
+        </div>
+        <div style="background:var(--bg); border:1px solid var(--border); padding:0.5rem; border-radius:6px; position:relative; margin-top:0.5rem;">
+          <code id="bounceScanCmd" style="font-size:0.72rem; color:var(--cyan); direction:ltr; display:block; word-break:break-all; font-family:'JetBrains Mono',monospace; padding-left:3rem;">$c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('...')</code>
+          <button onclick="copyBounceScanCmd()" class="btn-copy" style="position:absolute; top:0.4rem; left:0.4rem; padding:0.2rem 0.5rem; font-size:0.7rem;" title="نسخ">&#128203; نسخ</button>
+        </div>
+        <div style="color:var(--text-dim); font-size:0.75rem; margin-top:0.4rem;">
+          افتح PowerShell (Win+R → powershell)، الصق الأمر، وانتظر — السكريبت يقرأ Inbox ويرسل النتائج للسيرفر تلقائياً.
+        </div>
+      </div>
+
       <div style="color:var(--text-muted); font-size:0.85rem; margin-bottom:0.5rem;">
-        لما يجيلك إيميل "Delivery Failed" من Outlook، الصق <strong>نص الرسالة كاملاً</strong> هنا — النظام يستخرج العناوين تلقائياً ومش يرسل ليها تاني.
+        <strong>أو إضافة يدوية:</strong> الصق نص رسالة الـ bounce كاملاً هنا ليستخرج العناوين منها.
       </div>
       <div class="form-group">
-        <textarea id="bounceText" placeholder="الصق نص رسالة الـ bounce كاملاً هنا..." style="min-height:100px; font-family:monospace; font-size:0.8rem;"></textarea>
+        <textarea id="bounceText" placeholder="الصق نص رسالة الـ bounce كاملاً هنا..." style="min-height:80px; font-family:monospace; font-size:0.8rem;"></textarea>
       </div>
       <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
         <button class="btn" onclick="submitBounces()" style="background:var(--red);">&#128681; حفظ كـ Bounce</button>
@@ -1088,6 +1103,7 @@ Best regards,
       loadSmtpConfig();
       loadCVInfo();
       loadBounceCount();
+      updateBounceScanCmdDisplay();
     }
 
     function closeSettings() {
@@ -1209,6 +1225,20 @@ Best regards,
         status.className = 'status-msg err';
         status.textContent = 'خطأ في الرفع';
       }
+    }
+
+    function copyBounceScanCmd() {
+      const url = window.location.origin + '/api/send-cv/scan-bounces';
+      const cmd = `$c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('${url}')`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast('تم النسخ! افتح PowerShell والصقه');
+      });
+    }
+
+    function updateBounceScanCmdDisplay() {
+      const url = window.location.origin + '/api/send-cv/scan-bounces';
+      const el = document.getElementById('bounceScanCmd');
+      if (el) el.textContent = `$c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('${url}')`;
     }
 
     async function submitBounces() {

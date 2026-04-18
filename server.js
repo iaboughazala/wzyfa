@@ -2081,6 +2081,26 @@ function saveBounced(list) {
   fs.writeFileSync(BOUNCED_FILE, JSON.stringify(list, null, 2), 'utf-8');
 }
 
+// Bulk mark: accept array of email addresses
+app.post('/api/send-cv/mark-bounced-list', (req, res) => {
+  const { emails } = req.body;
+  if (!Array.isArray(emails)) return res.status(400).json({ error: 'emails array required' });
+  const bounced = loadBounced();
+  let added = 0;
+  const now = new Date().toISOString();
+  for (const raw of emails) {
+    if (!raw) continue;
+    const e = String(raw).toLowerCase().trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) continue;
+    if (!bounced.some(b => b.email === e)) {
+      bounced.push({ email: e, bouncedAt: now, source: 'outlook-scan' });
+      added++;
+    }
+  }
+  saveBounced(bounced);
+  res.json({ added, totalBounced: bounced.length });
+});
+
 app.post('/api/send-cv/mark-bounced', (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'email required' });
@@ -2144,6 +2164,97 @@ app.post('/api/send-cv/unmark-sent', (req, res) => {
 app.post('/api/send-cv/clear-sent', (req, res) => {
   saveSentEmails([]);
   res.json({ message: 'Sent history cleared' });
+});
+
+// Generate PowerShell script that scans Outlook inbox for bounced emails
+// and auto-reports them to mark-bounced-list. User pastes:
+//   $c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('https://wzyfa.com/api/send-cv/scan-bounces')
+app.get('/api/send-cv/scan-bounces', (req, res) => {
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const protocol = req.get('x-forwarded-proto') || req.protocol;
+  const publicBase = process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+  const smtpUser = (loadSmtpConfig() || {}).user || '';
+
+  const script = `$ErrorActionPreference = "Continue"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  Wzyfa - Outlook Bounce Scanner" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan ; Write-Host ""
+
+Write-Host "Connecting to Outlook..." -ForegroundColor Yellow
+try {
+  $Outlook = New-Object -ComObject Outlook.Application
+  $ns = $Outlook.GetNamespace("MAPI")
+  $inbox = $ns.GetDefaultFolder(6)  # olFolderInbox
+  Write-Host "Connected to inbox: $($inbox.Items.Count) messages" -ForegroundColor Green
+} catch {
+  Write-Host "ERROR: Could not connect to Outlook. $_" -ForegroundColor Red
+  return
+}
+
+Write-Host "Scanning for bounce notifications..." -ForegroundColor Yellow
+$items = $inbox.Items
+$items.Sort("[ReceivedTime]", $true)
+
+$myEmail = '${smtpUser}'.ToLower()
+$bouncedEmails = New-Object System.Collections.Generic.HashSet[string]
+$ndrCount = 0
+$scanned = 0
+
+foreach ($item in $items) {
+  $scanned++
+  if ($scanned -gt 500) { break }  # Only scan last 500 messages
+  try {
+    if ($item.Class -ne 43) { continue }  # olMail = 43
+    $subj = if ($item.Subject) { $item.Subject } else { '' }
+    $from = if ($item.SenderEmailAddress) { $item.SenderEmailAddress.ToLower() } else { '' }
+
+    # Is this a Non-Delivery Report?
+    $isNDR = $false
+    if ($subj -match 'Undeliverable|Delivery (has )?[Ff]ailed|delivery failure|Returned mail|failed delivery|Mail [Dd]elivery (Failed|Subsystem)|Delivery Status Notification') { $isNDR = $true }
+    if ($from -match 'postmaster|mailer-daemon|mail\\.protection\\.outlook|bounces?@|noreply.*delivery') { $isNDR = $true }
+    if (-not $isNDR) { continue }
+
+    $ndrCount++
+    $body = if ($item.Body) { $item.Body } else { '' }
+    # Extract email addresses from the NDR body
+    $regex = [regex]'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}'
+    $found = $regex.Matches($body)
+    foreach ($m in $found) {
+      $addr = $m.Value.ToLower()
+      # Skip system/infrastructure addresses
+      if ($addr -match 'microsoft\\.com$|outlook\\.com$|hotmail\\.com$|live\\.com$|protection\\.outlook|prod\\.outlook|arcselector|selector1|dkim|ppe-hosted|mimecast|emailsrvr|googlemail|gmail\\.com$|postmaster|mailer-daemon|noreply|no-reply') { continue }
+      if ($addr -eq $myEmail) { continue }
+      $null = $bouncedEmails.Add($addr)
+    }
+  } catch { continue }
+}
+
+Write-Host "Scanned $scanned messages, found $ndrCount NDR messages" -ForegroundColor Cyan
+Write-Host "Unique bounced addresses: $($bouncedEmails.Count)" -ForegroundColor Cyan
+
+if ($bouncedEmails.Count -eq 0) {
+  Write-Host "No bounces found — great!" -ForegroundColor Green
+  return
+}
+
+Write-Host "" ; Write-Host "Bounced addresses:" -ForegroundColor Yellow
+$bouncedEmails | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+
+# Send to server
+Write-Host "" ; Write-Host "Reporting to server..." -ForegroundColor Yellow
+try {
+  $payload = @{ emails = @($bouncedEmails) } | ConvertTo-Json -Compress
+  $resp = Invoke-RestMethod -Uri '${publicBase}/api/send-cv/mark-bounced-list' -Method Post -Body $payload -ContentType 'application/json'
+  Write-Host "Added $($resp.added) new bounces. Total blocked: $($resp.totalBounced)" -ForegroundColor Green
+} catch {
+  Write-Host "ERROR reporting bounces: $_" -ForegroundColor Red
+}
+`;
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(script);
 });
 
 // Mark email as sent (called by PowerShell script)
