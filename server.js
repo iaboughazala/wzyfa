@@ -77,20 +77,40 @@ function getCVPath() {
 }
 
 // Build attachment filename from sender name
-const DAILY_LIMIT = 20;
+// Rotating weekly schedule — Sunday=0, Monday=1, ..., Saturday=6
+// Keys match JavaScript getDay() output
+const DAILY_SCHEDULE = {
+  0: 20,  // الأحد
+  1: 18,  // الإثنين
+  2: 32,  // الثلاثاء
+  3: 24,  // الأربعاء
+  4: 14,  // الخميس
+  5: 29,  // الجمعة
+  6: 36   // السبت
+};
 
-// Count emails sent in the last 24 hours
+const DAY_NAMES_AR = {
+  0: 'الأحد', 1: 'الإثنين', 2: 'الثلاثاء', 3: 'الأربعاء',
+  4: 'الخميس', 5: 'الجمعة', 6: 'السبت'
+};
+
+function getDailyLimit(date = new Date()) {
+  return DAILY_SCHEDULE[date.getDay()];
+}
+
+// Count emails sent today (calendar day, local server time)
 function countSentToday() {
   const sent = loadSentEmails();
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   return sent.filter(s => {
     const t = new Date(s.sentAt || 0).getTime();
-    return t >= cutoff;
+    return t >= startOfToday;
   }).length;
 }
 
 function getDailyRemaining() {
-  return Math.max(0, DAILY_LIMIT - countSentToday());
+  return Math.max(0, getDailyLimit() - countSentToday());
 }
 
 function getAttachmentFilename() {
@@ -1521,16 +1541,33 @@ app.get('/api/send-cv/history', (req, res) => {
 
 // Daily limit status
 app.get('/api/send-cv/daily-status', (req, res) => {
-  const sent = loadSentEmails();
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const sentTodayList = sent.filter(s => new Date(s.sentAt || 0).getTime() >= cutoff);
+  const now = new Date();
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const todayLimit = getDailyLimit(now);
+  const tomorrowLimit = getDailyLimit(tomorrow);
+
+  // Build weekly preview (starting from today)
+  const weeklySchedule = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+    weeklySchedule.push({
+      dayIndex: d.getDay(),
+      dayName: DAY_NAMES_AR[d.getDay()],
+      date: d.toISOString().slice(0, 10),
+      limit: getDailyLimit(d),
+      isToday: i === 0
+    });
+  }
+
   res.json({
-    dailyLimit: DAILY_LIMIT,
-    sentToday: sentTodayList.length,
+    dailyLimit: todayLimit,
+    todayDayName: DAY_NAMES_AR[now.getDay()],
+    sentToday: countSentToday(),
     remaining: getDailyRemaining(),
-    resetsAt: sentTodayList.length > 0 ?
-      new Date(Math.min(...sentTodayList.map(s => new Date(s.sentAt).getTime())) + 24 * 60 * 60 * 1000).toISOString() :
-      null
+    tomorrowLimit,
+    tomorrowDayName: DAY_NAMES_AR[tomorrow.getDay()],
+    weeklyTotal: Object.values(DAILY_SCHEDULE).reduce((a, b) => a + b, 0),
+    weeklySchedule
   });
 });
 
@@ -1647,7 +1684,14 @@ if ($Confirm -eq 'n') { exit 0 }
 
 $Sent = 0
 $Failed = 0
-$DelaySeconds = 20  # Delay between emails to avoid spam filters
+
+# Human-like delay: target total duration 60-120 min (1-2 hours)
+# Distributed across all emails with ±30% randomness per interval
+$TargetDurationMin = Get-Random -Minimum 60 -Maximum 120
+$TargetDurationSec = $TargetDurationMin * 60
+$AvgDelaySec = [math]::Max(60, [math]::Floor($TargetDurationSec / [math]::Max($Jobs.Count, 1)))
+Write-Host ""
+Write-Host "Session plan: ~$TargetDurationMin minutes total, avg $AvgDelaySec sec between emails" -ForegroundColor DarkCyan
 
 foreach ($Job in $Jobs) {
     $Index = $Sent + $Failed + 1
@@ -1679,8 +1723,13 @@ foreach ($Job in $Jobs) {
     }
 
     if ($Index -lt $Jobs.Count) {
-        Write-Host "  Waiting $DelaySeconds seconds before next email..." -ForegroundColor DarkGray
-        Start-Sleep -Seconds $DelaySeconds
+        # Human-like delay: average ±30% randomness
+        $MinDelay = [math]::Max(60, [math]::Floor($AvgDelaySec * 0.7))
+        $MaxDelay = [math]::Floor($AvgDelaySec * 1.3)
+        $ThisDelay = Get-Random -Minimum $MinDelay -Maximum $MaxDelay
+        $DelayMin = [math]::Round($ThisDelay / 60, 1)
+        Write-Host "  Waiting $ThisDelay seconds (~$DelayMin min)..." -ForegroundColor DarkGray
+        Start-Sleep -Seconds $ThisDelay
     }
 }
 
@@ -1739,7 +1788,7 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
 
   // Test mode: ?test=EMAIL sends to user's own email (first job's content)
   // Limit mode: ?limit=N sends to only the first N jobs (capped by daily remaining)
-  // Default: respects DAILY_LIMIT (20/day)
+  // Default: respects today's limit from weekly schedule
   if (req.query.test) {
     const testEmail = String(req.query.test);
     pending = pending.slice(0, 1).map(j => ({ ...j, _originalEmail: j.email, email: testEmail, _isTest: true }));
@@ -1779,6 +1828,8 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
 
   const sentToday = countSentToday();
   const dailyRemaining = getDailyRemaining();
+  const todayLimit = getDailyLimit();
+  const todayName = DAY_NAMES_AR[new Date().getDay()];
   const script = `$ErrorActionPreference = "Continue"
 # Fix Arabic encoding for console and outgoing data
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
@@ -1786,7 +1837,7 @@ try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Write-Host "" ; Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Wzyfa - Outlook Auto-Send CV" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Daily limit: ${DAILY_LIMIT} | Already sent today: ${sentToday} | Remaining: ${dailyRemaining}" -ForegroundColor Yellow
+Write-Host "  Today (${todayName}): limit ${todayLimit} | sent ${sentToday} | remaining ${dailyRemaining}" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Cyan ; Write-Host ""
 
 # Save CV with personalized name so it appears as "${ps(attachmentFilename)}" in the email
@@ -1809,7 +1860,12 @@ Write-Host "" ; Write-Host "Total jobs: $($Jobs.Count)" -ForegroundColor Cyan
 $Confirm = Read-Host "Press Enter to start, 'n' to cancel"
 if ($Confirm -eq 'n') { return }
 
-$Sent = 0 ; $Failed = 0 ; $DelaySeconds = 20
+$Sent = 0 ; $Failed = 0
+# Human-like delay: target total duration 60-120 min, distributed across emails
+$TargetDurationMin = Get-Random -Minimum 60 -Maximum 120
+$AvgDelaySec = [math]::Max(60, [math]::Floor($TargetDurationMin * 60 / [math]::Max($Jobs.Count, 1)))
+Write-Host "" ; Write-Host "Session: ~$TargetDurationMin min total, avg $AvgDelaySec sec between emails" -ForegroundColor DarkCyan
+
 foreach ($Job in $Jobs) {
     $Index = $Sent + $Failed + 1
     Write-Host "" ; Write-Host "[$Index/$($Jobs.Count)] $($Job.Email)" -ForegroundColor Yellow
@@ -1828,7 +1884,14 @@ foreach ($Job in $Jobs) {
             Invoke-RestMethod -Uri "${markSentUrl}" -Method Post -Body $payload -ContentType "application/json" -TimeoutSec 5 | Out-Null
         } catch { }` : '# TEST MODE - not marking as sent on server'}
     } catch { Write-Host "  [FAIL] $_" -ForegroundColor Red ; $Failed++ }
-    if ($Index -lt $Jobs.Count) { Start-Sleep -Seconds $DelaySeconds }
+    if ($Index -lt $Jobs.Count) {
+        $MinDelay = [math]::Max(60, [math]::Floor($AvgDelaySec * 0.7))
+        $MaxDelay = [math]::Floor($AvgDelaySec * 1.3)
+        $ThisDelay = Get-Random -Minimum $MinDelay -Maximum $MaxDelay
+        $DelayMin = [math]::Round($ThisDelay / 60, 1)
+        Write-Host "  Next in $ThisDelay sec (~$DelayMin min)..." -ForegroundColor DarkGray
+        Start-Sleep -Seconds $ThisDelay
+    }
 }
 
 Write-Host "" ; Write-Host "Complete! Sent: $Sent | Failed: $Failed" -ForegroundColor Cyan

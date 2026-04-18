@@ -757,13 +757,15 @@
           </ol>
 
           <div id="dailyStatusBox" style="background:rgba(168,85,247,0.08); border:1px solid var(--purple); padding:0.75rem; border-radius:8px; margin:0.75rem 0;">
-            <div style="color:var(--purple); font-weight:600; font-size:0.95rem;">&#128197; الحد اليومي الآمن</div>
-            <div style="color:var(--text-muted); font-size:0.82rem; margin-top:0.3rem;">
-              تم إرسال <strong id="dailyStatusSent" style="color:var(--text)">0</strong> من أصل <strong style="color:var(--text)">20</strong> اليوم.
-              <strong id="dailyStatusRemaining" style="color:var(--green)">20</strong> متاحة حالياً.
+            <div style="color:var(--purple); font-weight:600; font-size:0.95rem;">&#128197; الجدول الأسبوعي — <span id="todayDayName">اليوم</span></div>
+            <div style="color:var(--text-muted); font-size:0.82rem; margin-top:0.4rem;">
+              حد اليوم: <strong id="dailyStatusLimit" style="color:var(--text)">20</strong> •
+              تم الإرسال: <strong id="dailyStatusSent" style="color:var(--text)">0</strong> •
+              متبقي: <strong id="dailyStatusRemaining" style="color:var(--green)">20</strong>
             </div>
-            <div style="color:var(--text-dim); font-size:0.75rem; margin-top:0.3rem;">
-              الحد محدد بـ 20/يوم لحماية حساب Outlook من الحظر. العداد يتصفر تلقائياً بعد 24 ساعة من أول إرسال.
+            <div id="weeklyScheduleGrid" style="display:grid; grid-template-columns:repeat(7, 1fr); gap:0.3rem; margin-top:0.75rem;"></div>
+            <div style="color:var(--text-dim); font-size:0.72rem; margin-top:0.5rem;">
+              &#9201; كل جلسة إرسال تستغرق 1-2 ساعة بفواصل عشوائية بين الإيميلات لتشبه السلوك البشري الطبيعي
             </div>
           </div>
 
@@ -1260,13 +1262,26 @@ Best regards,
       // Load message preview
       loadMessagePreview();
 
-      // Load daily status into modal
+      // Load daily status + weekly schedule into modal
       try {
         const ds = await (await fetch('/api/send-cv/daily-status')).json();
+        document.getElementById('todayDayName').textContent = ds.todayDayName;
+        document.getElementById('dailyStatusLimit').textContent = ds.dailyLimit;
         document.getElementById('dailyStatusSent').textContent = ds.sentToday;
         const remEl = document.getElementById('dailyStatusRemaining');
         remEl.textContent = ds.remaining;
         remEl.style.color = ds.remaining === 0 ? 'var(--red)' : ds.remaining < 5 ? 'var(--orange)' : 'var(--green)';
+
+        // Render weekly schedule grid
+        const grid = document.getElementById('weeklyScheduleGrid');
+        grid.innerHTML = (ds.weeklySchedule || []).map(d => {
+          const bg = d.isToday ? 'background:rgba(168,85,247,0.25); border:1px solid var(--purple);' : 'background:var(--bg-input); border:1px solid var(--border);';
+          const fg = d.isToday ? 'var(--purple)' : 'var(--text-muted)';
+          return `<div style="${bg} padding:0.4rem 0.2rem; border-radius:6px; text-align:center;">
+            <div style="color:${fg}; font-size:0.7rem; font-weight:600;">${d.dayName}</div>
+            <div style="color:var(--text); font-size:1.1rem; font-weight:700; font-family:'JetBrains Mono',monospace;">${d.limit}</div>
+          </div>`;
+        }).join('');
       } catch (e) {}
 
       // Show instructions modal
@@ -1375,6 +1390,9 @@ Best regards,
           else if (data.sentToday >= data.dailyLimit * 0.75) used.style.color = 'var(--orange)';
           else used.style.color = 'var(--purple)';
         }
+        // Tooltip with today's day name
+        const counterBox = used?.closest('.stat-item');
+        if (counterBox) counterBox.title = `${data.todayDayName || 'اليوم'}: ${data.dailyLimit} إيميل | غداً ${data.tomorrowDayName}: ${data.tomorrowLimit}`;
       } catch (e) {}
     }
 
