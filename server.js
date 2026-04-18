@@ -1786,6 +1786,35 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
     return !sentKeys.has(key);
   });
 
+  // Optional filters BEFORE applying daily limit:
+  // ?region=immigration|remote|gulf — filter by job region
+  // ?country=Germany|Canada|... — filter by country (case-insensitive substring)
+  // ?priority=immigration,remote — comma-separated: sort these regions first
+  if (req.query.region) {
+    const wantedRegion = String(req.query.region).toLowerCase();
+    pending = pending.filter(j => (j.region || 'gulf').toLowerCase() === wantedRegion);
+  }
+  if (req.query.country) {
+    const wantedCountry = String(req.query.country).toLowerCase();
+    pending = pending.filter(j =>
+      (j.country || '').toLowerCase().includes(wantedCountry) ||
+      (j.location || '').toLowerCase().includes(wantedCountry)
+    );
+  }
+  if (req.query.priority) {
+    const priorityList = String(req.query.priority).toLowerCase().split(',').map(s => s.trim());
+    // Sort: priority regions first (in order given), others last
+    pending = pending.slice().sort((a, b) => {
+      const ar = (a.region || 'gulf').toLowerCase();
+      const br = (b.region || 'gulf').toLowerCase();
+      const ai = priorityList.indexOf(ar);
+      const bi = priorityList.indexOf(br);
+      const aRank = ai === -1 ? 999 : ai;
+      const bRank = bi === -1 ? 999 : bi;
+      return aRank - bRank;
+    });
+  }
+
   // Test mode: ?test=EMAIL sends to user's own email (first job's content)
   // Limit mode: ?limit=N sends to only the first N jobs (capped by daily remaining)
   // Default: respects today's limit from weekly schedule

@@ -756,6 +756,37 @@
             <li>انسخ الأمر التالي والصقه في PowerShell:</li>
           </ol>
 
+          <h3>&#127919; اختر الأولوية</h3>
+          <div style="background:var(--bg-input); border:1px solid var(--border); padding:0.75rem; border-radius:8px; margin-bottom:0.75rem;">
+            <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
+              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="" checked onchange="updatePsCommand()"> الكل (بالترتيب الافتراضي)</label>
+              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="region=immigration" onchange="updatePsCommand()"> ✈️ فرص الهجرة فقط</label>
+              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="region=remote" onchange="updatePsCommand()"> 🌐 ريموت فقط</label>
+              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="region=gulf" onchange="updatePsCommand()"> 🏢 خليج فقط</label>
+              <label class="priority-opt" style="cursor:pointer;"><input type="radio" name="sendPriority" value="priority=immigration,remote" onchange="updatePsCommand()"> 🎯 هجرة/ريموت أولاً، ثم الباقي</label>
+            </div>
+            <div style="color:var(--text-dim); font-size:0.72rem; margin-top:0.5rem;">
+              &#128161; الفلترة تحصل قبل تطبيق الحد اليومي — لو اخترت "هجرة فقط" وعدد الهجرة أقل من حد اليوم، هيبعت اللي موجود بس.
+            </div>
+          </div>
+          <style>
+            .priority-opt {
+              background: var(--bg-card);
+              border: 1px solid var(--border);
+              padding: 0.35rem 0.7rem;
+              border-radius: 20px;
+              font-size: 0.8rem;
+              color: var(--text-muted);
+              transition: all 0.15s;
+            }
+            .priority-opt:has(input:checked) {
+              background: rgba(168,85,247,0.15);
+              border-color: var(--purple);
+              color: var(--purple);
+            }
+            .priority-opt input { display: none; }
+          </style>
+
           <div id="dailyStatusBox" style="background:rgba(168,85,247,0.08); border:1px solid var(--purple); padding:0.75rem; border-radius:8px; margin:0.75rem 0;">
             <div style="color:var(--purple); font-weight:600; font-size:0.95rem;">&#128197; الجدول الأسبوعي — <span id="todayDayName">اليوم</span></div>
             <div style="color:var(--text-muted); font-size:0.82rem; margin-top:0.4rem;">
@@ -1249,9 +1280,8 @@ Best regards,
         return;
       }
 
-      // Set the URL for the copy-paste command
-      const rawUrl = window.location.origin + '/api/send-cv/outlook-script-raw';
-      document.getElementById('scriptUrl').textContent = rawUrl;
+      // Set the URL for the copy-paste command (respects selected priority)
+      updatePsCommand();
 
       // Pre-fill test email from SMTP user if configured
       try {
@@ -1288,14 +1318,33 @@ Best regards,
       document.getElementById('outlookOverlay').classList.add('show');
     }
 
+    function getPriorityParam() {
+      const selected = document.querySelector('input[name="sendPriority"]:checked');
+      return selected ? selected.value : '';
+    }
+
+    function buildScriptUrl(extraParams = '') {
+      const base = window.location.origin + '/api/send-cv/outlook-script-raw';
+      const priority = getPriorityParam();
+      const parts = [];
+      if (priority) parts.push(priority);
+      if (extraParams) parts.push(extraParams);
+      return parts.length ? base + '?' + parts.join('&') : base;
+    }
+
     function buildPsCommand(url) {
       // Use WebClient with UTF-8 encoding to correctly handle Arabic characters
-      // iwr in Windows PowerShell 5.1 mis-decodes UTF-8, so we force it here
       return `$c=[Net.WebClient]::new();$c.Encoding=[Text.Encoding]::UTF8;iex $c.DownloadString('${url}')`;
     }
 
+    function updatePsCommand() {
+      const url = buildScriptUrl();
+      const urlEl = document.getElementById('scriptUrl');
+      if (urlEl) urlEl.textContent = url;
+    }
+
     function copyPsCommand() {
-      const url = window.location.origin + '/api/send-cv/outlook-script-raw';
+      const url = buildScriptUrl();
       const cmd = buildPsCommand(url);
       navigator.clipboard.writeText(cmd).then(() => {
         showToast('تم نسخ الأمر! الصقه في PowerShell');
@@ -1308,7 +1357,7 @@ Best regards,
         showToast('أدخل إيميل صحيح للاختبار');
         return;
       }
-      const url = window.location.origin + '/api/send-cv/outlook-script-raw?test=' + encodeURIComponent(testEmail);
+      const url = buildScriptUrl('test=' + encodeURIComponent(testEmail));
       const cmd = buildPsCommand(url);
       navigator.clipboard.writeText(cmd).then(() => {
         showToast('تم نسخ أمر الاختبار! الصقه في PowerShell');
