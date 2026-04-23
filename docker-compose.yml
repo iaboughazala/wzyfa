@@ -1,0 +1,12 @@
+services:
+  wzyfa-search:
+    build: .
+    image: wzyfa-search:latest
+    container_name: wzyfa-search
+    ports:
+      - "3000:3000"
+    environment:
+      - PUBLIC_BASE_URL=https://wzyfa.com
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

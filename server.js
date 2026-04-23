@@ -1813,7 +1813,16 @@ foreach ($Job in $Jobs) {
 
     try {
         $Mail = $Outlook.CreateItem(0)  # 0 = olMailItem
-        $Mail.To = $Job.Email
+        # Add recipient via Recipients.Add() + force SMTP address to bypass
+        # Outlook's name resolution against local contacts/GAL (which fails
+        # for unknown SMTP addresses with "Outlook does not recognize")
+        $recip = $Mail.Recipients.Add($Job.Email)
+        $recip.Type = 1  # olTo
+        try {
+            $PR_SMTP = 'http://schemas.microsoft.com/mapi/proptag/0x39FE001E'
+            $recip.PropertyAccessor.SetProperty($PR_SMTP, $Job.Email)
+        } catch { }
+        [void]$Mail.Recipients.ResolveAll()
         $Mail.Subject = $Job.Subject
         $Mail.Body = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Job.BodyB64))
         if (Test-Path $CvPath) {
@@ -2036,7 +2045,14 @@ foreach ($Job in $Jobs) {
     Write-Host "  $($Job.Title) @ $($Job.Company)" -ForegroundColor Gray
     try {
         $Mail = $Outlook.CreateItem(0)
-        $Mail.To = $Job.Email
+        # Use Recipients.Add() + SMTP property to bypass name resolution
+        $recip = $Mail.Recipients.Add($Job.Email)
+        $recip.Type = 1
+        try {
+            $PR_SMTP = 'http://schemas.microsoft.com/mapi/proptag/0x39FE001E'
+            $recip.PropertyAccessor.SetProperty($PR_SMTP, $Job.Email)
+        } catch { }
+        [void]$Mail.Recipients.ResolveAll()
         $Mail.Subject = $Job.Subject
         $Mail.Body = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Job.BodyB64))
         if (Test-Path $CvPath) { $null = $Mail.Attachments.Add($CvPath) }

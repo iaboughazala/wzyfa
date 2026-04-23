@@ -1,2 +1,7 @@
 node_modules/
 data/
+data.backup-*/
+server.js.before-compose-*
+email-jobs.html.before-*
+*.log
+.env
