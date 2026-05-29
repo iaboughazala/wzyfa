@@ -12,6 +12,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ─── Temporary Redirect to Fawtara (root only) ───
+// To disable: comment out this block
+app.get('/', (req, res) => {
+  res.redirect(302, 'https://fawtara.rezolyzer.com/en');
+});
+
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const JOBS_FILE = path.join(DATA_DIR, 'jobs.json');
