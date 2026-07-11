@@ -20,6 +20,11 @@ const {
   formatForFacebook, formatForX,
   isReal, companyFromEmail,
 } = require('./lib/social-poster');
+const {
+  isTelegramConfigured,
+  notify: notifyTelegram,
+  notifyNewLead, notifyPostRun, notifyError,
+} = require('./lib/telegram-notify');
 
 const app = express();
 app.use(cors());
@@ -3040,6 +3045,7 @@ app.post('/api/careers/apply', uploadCareersCv.single('cv'), async (req, res) =>
     saveLeads(leads);
 
     console.log(`[careers] new lead: ${name} <${email}> for "${position}"${jobId ? ' (job ' + jobId + ')' : ''}`);
+    notifyNewLead(lead);
     res.json({ ok: true });
   } catch (err) {
     console.error('[careers] apply error:', err);
@@ -3273,10 +3279,16 @@ app.listen(PORT, () => {
 
   // Daily social auto-post at 09:00 UTC (12:00 Cairo). Count is 3–10 random —
   // varying volume looks more organic than a fixed number every day.
-  cron.schedule('0 9 * * *', () => {
+  cron.schedule('0 9 * * *', async () => {
     const count = 3 + Math.floor(Math.random() * 8);
     console.log(`[Cron] Daily social post — ${count} job(s)`);
-    runDailyPost(count).catch(err => console.error('[Cron] social post failed:', err));
+    try {
+      const result = await runDailyPost(count);
+      notifyPostRun(result);
+    } catch (err) {
+      console.error('[Cron] social post failed:', err);
+      notifyError('Daily social post', err);
+    }
   });
 
   // Weekly FB token refresh — Sunday 03:00 UTC. FB long-lived page tokens
