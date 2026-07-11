@@ -900,6 +900,11 @@
         <option value="all">📧 الكل (شركات + شخصية)</option>
         <option value="personal">👤 شخصية فقط (Gmail/Yahoo/Hotmail)</option>
       </select>
+      <select id="statusFilter" title="حالة التقديم">
+        <option value="all">الكل - حالة التقديم</option>
+        <option value="pending">△ متاحة (لم يتم التقديم)</option>
+        <option value="applied">✓ تم التقديم</option>
+      </select>
       <select id="dateFilter">
         <option value="">الكل - التاريخ</option>
         <option value="1">24 ساعة</option>
@@ -1065,6 +1070,7 @@ Best regards,
     const searchInput = document.getElementById('searchInput');
     const countryFilter = document.getElementById('countryFilter');
     const regionFilter = document.getElementById('regionFilter');
+    const statusFilter = document.getElementById('statusFilter');
     const emailTypeFilter = document.getElementById('emailTypeFilter');
     const dateFilter = document.getElementById('dateFilter');
     const jobsBody = document.getElementById('jobsBody');
@@ -1589,7 +1595,18 @@ Best regards,
         const res = await fetch('/api/email-jobs?' + params.toString());
         const data = await res.json();
         allJobs = data.jobs || [];
-        filteredJobs = allJobs;
+
+        // Client-side filter by application status (uses sentEmailKeys loaded in browser)
+        const statusVal = statusFilter ? statusFilter.value : 'all';
+        if (statusVal === 'all') {
+          filteredJobs = allJobs;
+        } else {
+          filteredJobs = allJobs.filter(j => {
+            const key = `${(j.email||'').toLowerCase().trim()}|||${(j.title||'').toLowerCase().trim()}`;
+            const isApplied = sentEmailKeys.has(key);
+            return statusVal === 'applied' ? isApplied : !isApplied;
+          });
+        }
         currentPage = 1;
         renderJobs();
       } catch (e) {
@@ -1766,7 +1783,7 @@ Best regards,
     });
 
     // Filter change listeners
-    [countryFilter, regionFilter, emailTypeFilter, dateFilter].forEach(el => {
+    [countryFilter, regionFilter, emailTypeFilter, statusFilter, dateFilter].forEach(el => {
       el.addEventListener('change', () => fetchJobs());
     });
 

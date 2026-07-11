@@ -16,16 +16,48 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          # Forward env vars so the remote script can reference them as $VAR
+          # without embedding the values in the command line.
+          envs: ADMIN_PASSWORD,GOOGLE_DRIVE_CLIENT_ID,GOOGLE_DRIVE_CLIENT_SECRET,GOOGLE_DRIVE_REFRESH_TOKEN,GOOGLE_DRIVE_FOLDER_ID,FB_APP_ID,FB_APP_SECRET,FB_PAGE_ID,FB_PAGE_ACCESS_TOKEN
           script: |
             set -e
             cd /opt/wzyfa-search
             echo "=== Pull latest ==="
             git fetch origin main
             git reset --hard origin/main
+            echo "=== Write .env from GitHub secrets ==="
+            touch .env
+            chmod 600 .env
+            cat > .env <<EOF
+            ADMIN_PASSWORD=${ADMIN_PASSWORD}
+            PUBLIC_BASE_URL=https://wzyfa.com
+            GOOGLE_DRIVE_CLIENT_ID=${GOOGLE_DRIVE_CLIENT_ID}
+            GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET}
+            GOOGLE_DRIVE_REFRESH_TOKEN=${GOOGLE_DRIVE_REFRESH_TOKEN}
+            GOOGLE_DRIVE_FOLDER_ID=${GOOGLE_DRIVE_FOLDER_ID}
+            FB_APP_ID=${FB_APP_ID}
+            FB_APP_SECRET=${FB_APP_SECRET}
+            FB_PAGE_ID=${FB_PAGE_ID}
+            FB_PAGE_ACCESS_TOKEN=${FB_PAGE_ACCESS_TOKEN}
+            EOF
             echo "=== Rebuild and restart ==="
             docker compose up -d --build
             echo "=== Verify ==="
             sleep 3
             docker compose ps
-            curl -s -o /dev/null -w "API status: %{http_code}\n" https://wzyfa.com/email-jobs
+            curl -s -o /dev/null -w "email-jobs: %{http_code}\n" https://wzyfa.com/email-jobs
+            curl -s -o /dev/null -w "careers:    %{http_code}\n" https://wzyfa.com/careers
+            echo "--- /api/social/status ---"
+            curl -s https://wzyfa.com/api/social/status
+            echo ""
             echo "=== Deploy complete ==="
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          FB_APP_ID: ${{ secrets.FB_APP_ID }}
+          FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}

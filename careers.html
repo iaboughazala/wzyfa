@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>انضم لفريق وظيفة</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --brand: #1e3a8a;
+      --brand-hover: #1e40af;
+      --accent: #f59e0b;
+      --red: #ef4444;
+    }
+    html, body { height: 100%; }
+    body {
+      font-family: 'IBM Plex Sans Arabic', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      line-height: 1.4;
+      overflow: hidden;
+    }
+    header {
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    header .inner {
+      max-width: 72rem;
+      margin: 0 auto;
+      padding: 0 1rem;
+      height: 3.5rem;
+      display: flex;
+      align-items: center;
+    }
+    .logo { display: flex; align-items: center; text-decoration: none; }
+    .logo img { height: 2.25rem; width: auto; display: block; }
+
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      overflow: auto;
+    }
+    .container { width: 100%; max-width: 26rem; }
+    h1 {
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 1.25rem;
+    }
+
+    form { display: flex; flex-direction: column; gap: 0.75rem; }
+
+    .field { display: flex; flex-direction: column; gap: 0.3rem; }
+    label { font-size: 0.85rem; font-weight: 500; }
+    .req { color: var(--red); }
+
+    input[type=text] {
+      width: 100%;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.7rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+      transition: border-color 0.15s;
+    }
+    input[type=text]:focus { outline: none; border-color: var(--brand); }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .chip {
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--text);
+      border-radius: 999px;
+      padding: 0.3rem 0.75rem;
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .chip:hover { border-color: var(--brand); }
+    .chip.active {
+      border-color: var(--brand);
+      background: var(--brand);
+      color: white;
+    }
+
+    .upload-btn {
+      width: 100%;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      font-family: inherit;
+      font-size: 0.9rem;
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .upload-btn:hover { border-color: var(--brand); }
+    .upload-btn.has-file { border-color: #10b981; color: #065f46; }
+    input[type=file] { display: none; }
+
+    button[type=submit] {
+      width: 100%;
+      background: var(--brand);
+      color: white;
+      border: none;
+      border-radius: 0.5rem;
+      padding: 0.6rem 1rem;
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 0.15rem;
+    }
+    button[type=submit]:hover:not(:disabled) { background: var(--brand-hover); }
+    button[type=submit]:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .msg { padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-size: 0.85rem; }
+    .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .msg.success {
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      text-align: center;
+      padding: 1.5rem 1rem;
+    }
+    .msg.success h2 { font-size: 1.15rem; margin-bottom: 0.35rem; }
+    .msg.success p { font-size: 0.9rem; }
+
+    footer {
+      flex-shrink: 0;
+      border-top: 1px solid var(--border);
+      padding: 0.65rem 1rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="inner">
+      <a href="/" class="logo"><img src="/assets/logo.png" alt="وظيفة"></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <h1>انضم لفريق وظيفة</h1>
+
+      <form id="apply-form">
+        <div id="form-msg" class="msg hidden"></div>
+
+        <div class="field">
+          <label for="name">الاسم <span class="req">*</span></label>
+          <input type="text" id="name" name="name" required maxlength="100">
+        </div>
+
+        <div class="field">
+          <label>الوظيفة المتقدم لها <span class="req">*</span></label>
+          <div class="chips" id="chips"></div>
+          <input type="text" id="custom-position" name="position" class="hidden" maxlength="120" placeholder="اكتب اسم الوظيفة">
+        </div>
+
+        <div class="field">
+          <label>السيرة الذاتية (PDF أو Word، حتى 5 ميجا) <span class="req">*</span></label>
+          <label for="cv" class="upload-btn" id="upload-label">
+            <span>⬆︎</span>
+            <span id="upload-text">ارفع السيرة الذاتية</span>
+          </label>
+          <input type="file" id="cv" name="cv" accept=".pdf,.doc,.docx" required>
+        </div>
+
+        <button type="submit" id="submit-btn">قدّم الآن</button>
+      </form>
+    </div>
+  </main>
+
+  <footer>© 2026 وظيفة</footer>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const jobId = params.get('job');
+
+    const DEFAULT_POSITIONS = [
+      'تطوير وبرمجة', 'تحليل بيانات', 'إدارة مشاريع',
+      'استشارات', 'تسويق', 'مبيعات', 'تصميم', 'أخرى',
+    ];
+
+    let selectedPosition = '';
+    let customPositionMode = false;
+
+    function renderChips(positions, preselect) {
+      const wrap = document.getElementById('chips');
+      wrap.innerHTML = '';
+      positions.forEach(p => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'chip' + (p === preselect ? ' active' : '');
+        btn.textContent = p;
+        btn.addEventListener('click', () => selectPosition(p));
+        wrap.appendChild(btn);
+      });
+      if (preselect) selectedPosition = preselect;
+    }
+
+    function selectPosition(p) {
+      selectedPosition = p;
+      document.querySelectorAll('.chip').forEach(c => {
+        c.classList.toggle('active', c.textContent === p);
+      });
+      const custom = document.getElementById('custom-position');
+      if (p === 'أخرى') {
+        customPositionMode = true;
+        custom.classList.remove('hidden');
+        custom.focus();
+      } else {
+        customPositionMode = false;
+        custom.classList.add('hidden');
+        custom.value = '';
+      }
+    }
+
+    if (jobId) {
+      fetch('/api/careers/job/' + encodeURIComponent(jobId))
+        .then(r => r.ok ? r.json() : null)
+        .then(job => {
+          if (job && job.title) renderChips([job.title, 'أخرى'], job.title);
+          else renderChips(DEFAULT_POSITIONS);
+        })
+        .catch(() => renderChips(DEFAULT_POSITIONS));
+    } else {
+      renderChips(DEFAULT_POSITIONS);
+    }
+
+    const fileInput = document.getElementById('cv');
+    const uploadLabel = document.getElementById('upload-label');
+    const uploadText = document.getElementById('upload-text');
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files[0];
+      if (!f) return;
+      if (f.size > 5 * 1024 * 1024) {
+        showMsg('حجم الملف أكبر من 5 ميجا', 'error');
+        fileInput.value = '';
+        uploadLabel.classList.remove('has-file');
+        uploadText.textContent = 'ارفع السيرة الذاتية';
+        return;
+      }
+      uploadLabel.classList.add('has-file');
+      uploadText.textContent = f.name;
+    });
+
+    function showMsg(text, type) {
+      const el = document.getElementById('form-msg');
+      el.textContent = text;
+      el.className = 'msg ' + type;
+      el.classList.remove('hidden');
+    }
+
+    document.getElementById('apply-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const finalPosition = customPositionMode
+        ? document.getElementById('custom-position').value.trim()
+        : selectedPosition;
+      if (!finalPosition) {
+        showMsg(customPositionMode ? 'اكتب اسم الوظيفة' : 'اختر الوظيفة', 'error');
+        return;
+      }
+      if (!fileInput.files[0]) {
+        showMsg('أرفق السيرة الذاتية', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'جاري الإرسال...';
+      document.getElementById('form-msg').classList.add('hidden');
+
+      const fd = new FormData();
+      fd.append('name', document.getElementById('name').value);
+      fd.append('position', finalPosition);
+      fd.append('cv', fileInput.files[0]);
+      if (jobId) fd.append('jobId', jobId);
+
+      try {
+        const res = await fetch('/api/careers/apply', { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showMsg(data.error || 'حدث خطأ، جرّب تاني', 'error');
+          btn.disabled = false;
+          btn.textContent = 'قدّم الآن';
+          return;
+        }
+        document.getElementById('apply-form').innerHTML =
+          '<div class="msg success"><h2>استلمنا طلبك ✅</h2><p>هنراجع سيرتك ولو في تطابق مع فرصة هنتواصل معك.</p></div>';
+      } catch (err) {
+        showMsg('تعذّر الاتصال، تأكد من الإنترنت', 'error');
+        btn.disabled = false;
+        btn.textContent = 'قدّم الآن';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Careers Admin — Wzyfa</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0a0d14; --bg-card: #161c2e; --bg-input: #1a2136;
+      --accent: #3b82f6; --text: #e2e8f0; --text-muted: #94a3b8;
+      --text-dim: #64748b; --border: #1e293b; --green: #22c55e; --red: #ef4444;
+    }
+    body {
+      font-family: 'IBM Plex Sans Arabic', sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem 1rem;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem; margin-bottom: 1.5rem;
+    }
+    .stat {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem;
+    }
+    .stat .num { font-size: 1.75rem; font-weight: 700; color: var(--accent); }
+    .stat .label { color: var(--text-muted); font-size: 0.85rem; }
+    .filters {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem; margin-bottom: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap;
+    }
+    .filters input {
+      flex: 1; min-width: 200px;
+      background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.5rem 0.75rem; color: var(--text); font-family: inherit; font-size: 0.9rem;
+    }
+    table {
+      width: 100%; border-collapse: collapse;
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+      overflow: hidden;
+    }
+    th, td { padding: 0.75rem 1rem; text-align: right; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+    th { background: #0d1117; color: var(--text-muted); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover { background: rgba(59, 130, 246, 0.04); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .badge {
+      display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px;
+      font-size: 0.75rem; background: rgba(59, 130, 246, 0.15); color: var(--accent);
+    }
+    .empty { text-align: center; padding: 3rem; color: var(--text-dim); }
+    .date { color: var(--text-dim); font-size: 0.8rem; direction: ltr; }
+    @media (max-width: 700px) {
+      table, thead, tbody, th, td, tr { display: block; }
+      thead { display: none; }
+      tr { margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; }
+      td { border: none; padding: 0.35rem 0; }
+      td::before { content: attr(data-label) ': '; color: var(--text-muted); font-weight: 500; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Careers — طلبات التوظيف</h1>
+    <p class="subtitle">قاعدة بيانات المتقدمين على <a href="/careers">/careers</a></p>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="filters">
+      <input type="text" id="search" placeholder="🔍 بحث بالاسم / الإيميل / الوظيفة...">
+    </div>
+
+    <div id="table-wrap"></div>
+  </div>
+
+  <script>
+    let leads = [];
+
+    async function load() {
+      try {
+        const res = await fetch('/api/careers/leads');
+        if (!res.ok) throw new Error('failed');
+        leads = await res.json();
+        render();
+      } catch (e) {
+        document.getElementById('table-wrap').innerHTML =
+          '<div class="empty">تعذّر تحميل البيانات (لازم Basic Auth)</div>';
+      }
+    }
+
+    function render() {
+      const q = document.getElementById('search').value.trim().toLowerCase();
+      const filtered = q
+        ? leads.filter(l =>
+            (l.name || '').toLowerCase().includes(q) ||
+            (l.email || '').toLowerCase().includes(q) ||
+            (l.position || '').toLowerCase().includes(q) ||
+            (l.jobTitle || '').toLowerCase().includes(q))
+        : leads;
+
+      // Stats
+      const total = leads.length;
+      const withDrive = leads.filter(l => l.driveLink).length;
+      const withJob = leads.filter(l => l.jobId).length;
+      const last7 = leads.filter(l => {
+        if (!l.submittedAt) return false;
+        return (Date.now() - new Date(l.submittedAt).getTime()) < 7 * 86400e3;
+      }).length;
+      document.getElementById('stats').innerHTML = `
+        <div class="stat"><div class="num">${total}</div><div class="label">إجمالي المتقدمين</div></div>
+        <div class="stat"><div class="num">${last7}</div><div class="label">آخر 7 أيام</div></div>
+        <div class="stat"><div class="num">${withJob}</div><div class="label">من بوست وظيفة</div></div>
+        <div class="stat"><div class="num">${withDrive}</div><div class="label">CV على درايف</div></div>
+      `;
+
+      if (filtered.length === 0) {
+        document.getElementById('table-wrap').innerHTML = '<div class="empty">لا توجد طلبات بعد</div>';
+        return;
+      }
+
+      const rows = filtered.slice().reverse().map(l => `
+        <tr>
+          <td data-label="الاسم">${escapeHtml(l.name || '')}</td>
+          <td data-label="الإيميل"><a href="mailto:${escapeAttr(l.email)}" dir="ltr">${escapeHtml(l.email || '')}</a></td>
+          <td data-label="الموبايل" dir="ltr">${escapeHtml(l.phone || '—')}</td>
+          <td data-label="الوظيفة">${escapeHtml(l.position || '—')}</td>
+          <td data-label="من وظيفة">${l.jobTitle ? `<span class="badge">${escapeHtml(l.jobTitle)}</span>` : '—'}</td>
+          <td data-label="CV">${l.driveLink
+            ? `<a href="${escapeAttr(l.driveLink)}" target="_blank">🔗 Drive</a>`
+            : (l.localFile ? `<a href="/api/careers/leads/${escapeAttr(l.id)}/cv">📄 تحميل</a>` : '—')}</td>
+          <td data-label="التاريخ" class="date">${l.submittedAt ? new Date(l.submittedAt).toISOString().slice(0, 16).replace('T', ' ') : ''}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('table-wrap').innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>الاسم</th><th>الإيميل</th><th>الموبايل</th>
+              <th>الوظيفة المهتم بها</th><th>من بوست</th><th>CV</th><th>التاريخ</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function escapeAttr(s) { return escapeHtml(s); }
+
+    document.getElementById('search').addEventListener('input', render);
+    load();
+  </script>
+</body>
+</html>

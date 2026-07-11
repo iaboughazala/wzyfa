@@ -5,6 +5,8 @@ services:
     container_name: wzyfa-search
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       - PUBLIC_BASE_URL=https://wzyfa.com
     volumes:

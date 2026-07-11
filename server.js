@@ -1,3 +1,7 @@
+// Load .env for local dev. On the VPS, env vars come from docker-compose's
+// env_file, so this is a no-op if dotenv isn't installed.
+try { require('dotenv').config(); } catch (_) {}
+
 const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
@@ -5,17 +9,30 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const dns = require('dns').promises;
 const nodemailer = require('nodemailer');
 const multer = require('multer');
+const crypto = require('crypto');
+const { isDriveConfigured, uploadToDrive } = require('./lib/google-drive');
+const {
+  isFacebookConfigured, postToFacebook, refreshFacebookToken,
+  isXConfigured, postToX,
+  formatForFacebook, formatForX,
+} = require('./lib/social-poster');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb', strict: false }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// ─── Temporary Redirect to Fawtara (root only) ───
-// To disable: comment out this block
-app.get('/', (req, res) => {
-  res.redirect(302, 'https://fawtara.rezolyzer.com/en');
+// Fallback: if body-parser failed to parse JSON, log and return 400 cleanly
+// instead of letting Express crash the request silently.
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') {
+    console.warn('[BodyParser] Bad JSON from', req.method, req.url, '-', err.message);
+    return res.status(400).json({ error: 'Invalid JSON', message: err.message });
+  }
+  next(err);
 });
 
 const PORT = process.env.PORT || 3000;
@@ -27,9 +44,13 @@ const EMAIL_JOBS_FILE = path.join(DATA_DIR, 'email-jobs.json');
 const SENT_FILE = path.join(DATA_DIR, 'sent-emails.json');
 const SMTP_CONFIG_FILE = path.join(DATA_DIR, 'smtp-config.json');
 const CV_DIR = path.join(DATA_DIR, 'cv');
+const LEADS_FILE = path.join(DATA_DIR, 'leads.json');
+const CAREERS_CV_DIR = path.join(DATA_DIR, 'careers-cvs');
+const SOCIAL_POSTED_FILE = path.join(DATA_DIR, 'social-posted.json');
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(CV_DIR)) fs.mkdirSync(CV_DIR, { recursive: true });
+if (!fs.existsSync(CAREERS_CV_DIR)) fs.mkdirSync(CAREERS_CV_DIR, { recursive: true });
 
 // ─── CV Upload Setup ───
 const cvStorage = multer.diskStorage({
@@ -85,15 +106,17 @@ function getCVPath() {
 // Build attachment filename from sender name
 // Rotating weekly schedule — Sunday=0, Monday=1, ..., Saturday=6
 // Keys match JavaScript getDay() output
+// Daily limits at 80% of original (reduced 20% to lower bounce-rate exposure)
 const DAILY_SCHEDULE = {
-  0: 20,  // الأحد
-  1: 18,  // الإثنين
-  2: 32,  // الثلاثاء
-  3: 24,  // الأربعاء
-  4: 14,  // الخميس
-  5: 29,  // الجمعة
-  6: 36   // السبت
+  0: 16,  // الأحد   (was 20)
+  1: 14,  // الإثنين  (was 18)
+  2: 26,  // الثلاثاء (was 32)
+  3: 19,  // الأربعاء (was 24)
+  4: 27,  // الخميس   (was 34)
+  5: 23,  // الجمعة   (was 29)
+  6: 29   // السبت    (was 36)
 };
+// Total: 154/week (was 193) — gives sender reputation room to recover
 
 const DAY_NAMES_AR = {
   0: 'الأحد', 1: 'الإثنين', 2: 'الثلاثاء', 3: 'الأربعاء',
@@ -1067,6 +1090,12 @@ async function fetchGoogleEmailJobs(browser) {
           if (!isRelevantJob(r.title, r.snippet)) continue;
 
           for (const email of emails) {
+            // MX check — skip emails whose domain can't receive mail
+            const canReceive = await emailDomainCanReceive(email);
+            if (!canReceive) {
+              console.log(`[EmailJobs-Google] Skip ${email} — no MX records`);
+              continue;
+            }
             const detectedCountry = detectCountry(fullText) || queryObj.country;
             jobs.push({
               title: r.title || extractJobTitleFromText(fullText),
@@ -1139,6 +1168,12 @@ async function fetchTwitterEmailJobs(browser) {
           if (!isRelevantJob(extractJobTitleFromText(tweetText), tweetText)) continue;
 
           for (const email of emails) {
+            // MX check — skip emails whose domain can't receive mail
+            const canReceive = await emailDomainCanReceive(email);
+            if (!canReceive) {
+              console.log(`[EmailJobs-Twitter] Skip ${email} — no MX records`);
+              continue;
+            }
             jobs.push({
               title: extractJobTitleFromText(tweetText),
               company: extractCompanyFromText(tweetText),
@@ -1216,6 +1251,12 @@ async function fetchBaytEmailJobs(browser) {
             if (!isRelevantJob(r.title || extractJobTitleFromText(pageText), pageText)) continue;
 
             for (const email of emails) {
+              // MX check — skip emails whose domain can't receive mail
+              const canReceive = await emailDomainCanReceive(email);
+              if (!canReceive) {
+                console.log(`[EmailJobs-Bayt] Skip ${email} — no MX records`);
+                continue;
+              }
               jobs.push({
                 title: r.title || extractJobTitleFromText(pageText),
                 company: r.company || extractCompanyFromText(pageText),
@@ -1675,7 +1716,8 @@ app.get('/api/send-cv/daily-status', (req, res) => {
     tomorrowLimit,
     tomorrowDayName: DAY_NAMES_AR[tomorrow.getDay()],
     weeklyTotal: Object.values(DAILY_SCHEDULE).reduce((a, b) => a + b, 0),
-    weeklySchedule
+    weeklySchedule,
+    cooldownDays: COOLDOWN_DAYS
   });
 });
 
@@ -1907,15 +1949,41 @@ app.get('/api/send-cv/outlook-script-raw', (req, res) => {
   const jobs = loadEmailJobs();
   const sent = loadSentEmails();
   const bounced = loadBounced();
-  const sentKeys = new Set(sent.map(s => s.key));
   const bouncedEmails = new Set(bounced.map(b => b.email.toLowerCase()));
+
+  // Build per-email "most recent send" map for cooldown check
+  // (matches try-claim semantics: exact job forever, same-email for 30d)
+  const mostRecentByEmail = new Map();
+  const exactKeysSent = new Set();
+  for (const s of sent) {
+    const em = (s.email || '').toLowerCase();
+    if (!em) continue;
+    if (s.key) exactKeysSent.add(s.key);
+    const t = new Date(s.sentAt || 0).getTime();
+    if (!mostRecentByEmail.has(em) || mostRecentByEmail.get(em) < t) {
+      mostRecentByEmail.set(em, t);
+    }
+  }
+  const cooldownCutoff = Date.now() - (COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+
+  const seenInPending = new Set();
   let pending = jobs.filter(j => {
     if (!j.email) return false;
-    if (bouncedEmails.has(j.email.toLowerCase())) return false; // skip known-bad addresses
-    // Skip personal emails (gmail/yahoo/hotmail) — opt in via ?includePersonal=true
+    const em = j.email.toLowerCase();
+    if (bouncedEmails.has(em)) return false;
+    // Always skip obvious system addresses (noreply, postmaster, admin)
+    if (isRiskyEmail(em)) return false;
+    // Rule 1: exact same email+title already sent → never
+    const exactKey = `${em}|||${(j.title || '').toLowerCase()}`;
+    if (exactKeysSent.has(exactKey)) return false;
+    // Rule 2: same email sent within cooldown window → skip
+    const lastSent = mostRecentByEmail.get(em);
+    if (lastSent && lastSent >= cooldownCutoff) return false;
+    // Dedup within pending (same email appears in multiple jobs this scan)
+    if (seenInPending.has(em)) return false;
     if (req.query.includePersonal !== 'true' && isPersonalEmail(j.email)) return false;
-    const key = `${j.email}|||${(j.title || '').toLowerCase()}`;
-    return !sentKeys.has(key);
+    seenInPending.add(em);
+    return true;
   });
 
   // Optional filters BEFORE applying daily limit:
@@ -2049,6 +2117,67 @@ foreach ($Job in $Jobs) {
     $Index = $Sent + $Failed + 1
     Write-Host "" ; Write-Host "[$Index/$($Jobs.Count)] $($Job.Email)" -ForegroundColor Yellow
     Write-Host "  $($Job.Title) @ $($Job.Company)" -ForegroundColor Gray
+
+    ${markSentUrl ? `
+    # STEP 1: Try to atomically claim this email on the server
+    $claimed = $false
+    try {
+        # Sanitize fields aggressively before JSON serialization:
+        # - Replace smart quotes / dashes with ASCII
+        # - Strip control characters (cause JSON parse errors server-side)
+        # - Collapse whitespace, trim, cap length
+        $cleanEmail = ([string]$Job.Email).Trim().ToLower()
+        $cleanTitle = [string]$Job.Title
+        $cleanTitle = $cleanTitle -replace '[‘’]', "'"
+        $cleanTitle = $cleanTitle -replace '[“”]', '"'
+        $cleanTitle = $cleanTitle -replace '[–—]', '-'
+        $cleanTitle = $cleanTitle -replace '[•·]', '-'
+        $cleanTitle = $cleanTitle -replace '[\x00-\x1F\x7F]', ' '
+        $cleanTitle = ($cleanTitle -replace '\s+', ' ').Trim()
+        if ($cleanTitle.Length -gt 200) { $cleanTitle = $cleanTitle.Substring(0, 200) }
+        $cleanCompany = [string]$Job.Company
+        $cleanCompany = $cleanCompany -replace '[\x00-\x1F\x7F]', ' '
+        $cleanCompany = ($cleanCompany -replace '\s+', ' ').Trim()
+        if ($cleanCompany.Length -gt 100) { $cleanCompany = $cleanCompany.Substring(0, 100) }
+
+        $claimPayload = @{ email = $cleanEmail; title = $cleanTitle; company = $cleanCompany } | ConvertTo-Json -Compress -Depth 3
+
+        # Retry up to 3 times with exponential backoff before giving up
+        $claimResp = $null
+        $lastErr = $null
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                $claimResp = Invoke-RestMethod -Uri '${publicBase}/api/send-cv/try-claim' -Method Post -Body $claimPayload -ContentType 'application/json; charset=utf-8' -TimeoutSec 15
+                break
+            } catch {
+                $lastErr = $_
+                if ($attempt -lt 3) { Start-Sleep -Seconds (2 * $attempt) }
+            }
+        }
+        if (-not $claimResp) {
+            Write-Host "  [SKIP] Server claim failed after 3 retries: $lastErr" -ForegroundColor DarkRed
+            $Failed++
+            continue  # try next email instead of aborting whole session
+        }
+
+        $claimed = $claimResp.claimed
+        if (-not $claimed) {
+            if ($claimResp.reason -eq 'cooldown') {
+                Write-Host "  [SKIP] Cooldown: $($claimResp.daysRemaining) days remaining (last: $($claimResp.lastTitle))" -ForegroundColor DarkYellow
+            } elseif ($claimResp.reason -eq 'no-mx-records') {
+                Write-Host "  [SKIP] No MX records — domain can't receive mail" -ForegroundColor DarkRed
+            } else {
+                Write-Host "  [SKIP] Already sent this exact job on $($claimResp.sentAt)" -ForegroundColor DarkYellow
+            }
+            continue
+        }
+    } catch {
+        Write-Host "  [SKIP] Claim error (non-fatal): $_" -ForegroundColor DarkRed
+        $Failed++
+        continue
+    }
+    ` : '# TEST MODE - no claim'}
+
     try {
         $Mail = $Outlook.CreateItem(0)
         # Use Recipients.Add() + SMTP property to bypass name resolution
@@ -2065,11 +2194,22 @@ foreach ($Job in $Jobs) {
         $Mail.Send()
         Write-Host "  [OK] Sent" -ForegroundColor Green
         $Sent++
-        ${markSentUrl ? `try {
-            $payload = @{ email = $Job.Email; title = $Job.Title; company = $Job.Company } | ConvertTo-Json
-            Invoke-RestMethod -Uri "${markSentUrl}" -Method Post -Body $payload -ContentType "application/json" -TimeoutSec 5 | Out-Null
-        } catch { }` : '# TEST MODE - not marking as sent on server'}
-    } catch { Write-Host "  [FAIL] $_" -ForegroundColor Red ; $Failed++ }
+        ${markSentUrl ? `
+        # STEP 2: Confirm the claim (promote from pending to confirmed)
+        try {
+            $confirmPayload = @{ email = $Job.Email; title = $Job.Title; company = $Job.Company } | ConvertTo-Json
+            Invoke-RestMethod -Uri '${publicBase}/api/send-cv/confirm-claim' -Method Post -Body $confirmPayload -ContentType 'application/json' -TimeoutSec 5 | Out-Null
+        } catch { }` : '# TEST MODE - no confirm'}
+    } catch {
+        Write-Host "  [FAIL] $_" -ForegroundColor Red
+        $Failed++
+        ${markSentUrl ? `
+        # Release the claim since send failed
+        try {
+            $releasePayload = @{ email = $Job.Email; title = $Job.Title } | ConvertTo-Json
+            Invoke-RestMethod -Uri '${publicBase}/api/send-cv/release-claim' -Method Post -Body $releasePayload -ContentType 'application/json' -TimeoutSec 5 | Out-Null
+        } catch { }` : '# TEST MODE - no release'}
+    }
     if ($Index -lt $Jobs.Count) {
         $MinDelay = [math]::Max(10, [math]::Floor($AvgDelaySec * 0.7))
         $MaxDelay = [math]::Max($MinDelay + 1, [math]::Floor($AvgDelaySec * 1.3))
@@ -2099,6 +2239,59 @@ function loadBounced() {
 function saveBounced(list) {
   fs.writeFileSync(BOUNCED_FILE, JSON.stringify(list, null, 2), 'utf-8');
 }
+
+// One-shot: scan email-jobs.json and remove entries whose domain has no
+// MX records. Returns counts. Use ?dryRun=true to preview without changing.
+app.post('/api/email-jobs/cleanup-no-mx', async (req, res) => {
+  const dryRun = req.query.dryRun === 'true';
+  const jobs = loadEmailJobs();
+  const start = jobs.length;
+
+  // Group by domain to minimize DNS lookups
+  const byDomain = new Map();
+  for (let i = 0; i < jobs.length; i++) {
+    const dom = ((jobs[i].email || '').split('@')[1] || '').toLowerCase();
+    if (!dom) continue;
+    if (!byDomain.has(dom)) byDomain.set(dom, []);
+    byDomain.get(dom).push(i);
+  }
+
+  // Check each unique domain (with concurrency limit)
+  const domains = [...byDomain.keys()];
+  const deadDomains = new Set();
+  const liveDomains = new Set();
+  const CONCURRENCY = 20;
+  for (let i = 0; i < domains.length; i += CONCURRENCY) {
+    const batch = domains.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map(async d => ({ d, ok: await hasMxRecord(d) })));
+    for (const { d, ok } of results) {
+      if (ok) liveDomains.add(d);
+      else deadDomains.add(d);
+    }
+  }
+
+  // Build kept list
+  const kept = jobs.filter(j => {
+    const dom = ((j.email || '').split('@')[1] || '').toLowerCase();
+    return !deadDomains.has(dom);
+  });
+
+  const removed = start - kept.length;
+  if (!dryRun) {
+    saveEmailJobs(kept);
+  }
+
+  res.json({
+    dryRun,
+    domainsChecked: domains.length,
+    deadDomains: deadDomains.size,
+    liveDomains: liveDomains.size,
+    jobsBefore: start,
+    jobsAfter: kept.length,
+    removed,
+    deadDomainsList: [...deadDomains].slice(0, 50)
+  });
+});
 
 // Bulk mark: accept array of email addresses
 app.post('/api/send-cv/mark-bounced-list', (req, res) => {
@@ -2347,6 +2540,634 @@ app.post('/api/send-cv/mark-sent', (req, res) => {
   res.json({ ok: true });
 });
 
+// Cooldown period: don't send to same email within this many days,
+// even if it's a different job posting. After this, it's eligible again.
+const COOLDOWN_DAYS = 30;
+
+// Generic mailboxes that historically bounce often. These are often:
+// - Forwarded inboxes (many recipients, easy to misconfigure)
+// - Auto-deleting due to inactivity
+// - Strict spam filters that reject external mail
+// Disable by passing ?skipRisky=false on script-raw endpoint.
+const RISKY_LOCAL_PARTS = [
+  'noreply', 'no-reply', 'donotreply', 'do-not-reply',
+  'mailerdaemon', 'mailer-daemon', 'postmaster', 'admin',
+  'webmaster', 'abuse', 'spam'
+];
+
+function isRiskyEmail(email) {
+  if (!email) return false;
+  const local = String(email).toLowerCase().split('@')[0];
+  // Block common system/auto-reply addresses (always)
+  if (RISKY_LOCAL_PARTS.includes(local)) return true;
+  return false;
+}
+
+// MX record cache — avoid hammering DNS for repeated domains
+const MX_CACHE = new Map();
+const MX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;  // 24 hours
+
+// Returns true if domain has MX records (i.e., can receive email).
+// Falsy result = email will definitely bounce → skip.
+async function hasMxRecord(domain) {
+  if (!domain) return false;
+  const d = domain.toLowerCase().trim();
+  // Check cache
+  const cached = MX_CACHE.get(d);
+  if (cached && (Date.now() - cached.ts) < MX_CACHE_TTL_MS) {
+    return cached.valid;
+  }
+  try {
+    const records = await dns.resolveMx(d);
+    const valid = Array.isArray(records) && records.length > 0;
+    MX_CACHE.set(d, { valid, ts: Date.now() });
+    return valid;
+  } catch (e) {
+    // ENODATA / ENOTFOUND / SERVFAIL all mean no usable MX
+    MX_CACHE.set(d, { valid: false, ts: Date.now() });
+    return false;
+  }
+}
+
+async function emailDomainCanReceive(email) {
+  if (!email || !email.includes('@')) return false;
+  const domain = email.split('@')[1];
+  return hasMxRecord(domain);
+}
+
+// Atomic claim with two rules:
+//   1. Exact match (email + title): never resend the same posting
+//   2. Same email within COOLDOWN_DAYS: skip to protect sender reputation
+// If same email posts a new job after COOLDOWN_DAYS, we CAN apply again.
+app.post('/api/send-cv/try-claim', async (req, res) => {
+  const { email, title, company } = req.body;
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'email required' });
+  const em = String(email).toLowerCase().trim();
+  const t = (title || '').toLowerCase();
+
+  // Last-line defense: MX check at send time too. If domain can't receive
+  // mail (no MX records), reject before Outlook even tries.
+  const canReceive = await emailDomainCanReceive(em);
+  if (!canReceive) {
+    return res.json({
+      claimed: false,
+      reason: 'no-mx-records',
+      message: 'Domain has no MX records — would bounce'
+    });
+  }
+
+  const sent = loadSentEmails();
+
+  // Rule 1: exact same posting already claimed/sent → never resend
+  const exactKey = `${em}|||${t}`;
+  const exactMatch = sent.find(s => s.key === exactKey);
+  if (exactMatch) {
+    return res.json({
+      claimed: false,
+      reason: 'same-job-already-sent',
+      sentAt: exactMatch.sentAt
+    });
+  }
+
+  // Rule 2: same email sent recently → cooldown
+  const cooldownCutoff = Date.now() - (COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+  const recentForEmail = sent
+    .filter(s => (s.email || '').toLowerCase() === em)
+    .sort((a, b) => new Date(b.sentAt || 0) - new Date(a.sentAt || 0))[0];
+  if (recentForEmail) {
+    const lastSentMs = new Date(recentForEmail.sentAt || 0).getTime();
+    if (lastSentMs >= cooldownCutoff) {
+      const daysAgo = Math.floor((Date.now() - lastSentMs) / (24 * 60 * 60 * 1000));
+      const daysRemaining = COOLDOWN_DAYS - daysAgo;
+      return res.json({
+        claimed: false,
+        reason: 'cooldown',
+        sentAt: recentForEmail.sentAt,
+        lastTitle: recentForEmail.title,
+        daysRemaining,
+        cooldownDays: COOLDOWN_DAYS
+      });
+    }
+  }
+
+  // Both rules pass → atomically claim
+  sent.push({
+    key: exactKey,
+    email: em,
+    title: title || '',
+    company: company || '',
+    sentAt: new Date().toISOString(),
+    via: 'claim-pending',
+    pending: true
+  });
+  saveSentEmails(sent);
+  res.json({ claimed: true });
+});
+
+// Release a claim (caller failed to send, so remove the pending entry)
+app.post('/api/send-cv/release-claim', (req, res) => {
+  const { email, title } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const em = String(email).toLowerCase().trim();
+  const key = `${em}|||${(title || '').toLowerCase()}`;
+  let sent = loadSentEmails();
+  const before = sent.length;
+  sent = sent.filter(s => !(s.key === key && s.pending));
+  saveSentEmails(sent);
+  res.json({ released: before - sent.length });
+});
+
+// Confirm a claim actually sent (promote from pending to confirmed)
+app.post('/api/send-cv/confirm-claim', (req, res) => {
+  const { email, title, company } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const em = String(email).toLowerCase().trim();
+  const key = `${em}|||${(title || '').toLowerCase()}`;
+  const sent = loadSentEmails();
+  const entry = sent.find(s => s.key === key);
+  if (entry && entry.pending) {
+    delete entry.pending;
+    entry.via = 'outlook-desktop';
+    entry.sentAt = new Date().toISOString();
+    saveSentEmails(sent);
+  }
+  res.json({ ok: true });
+});
+
+// Bulk mark-sent from Outlook Sent folder scan (recovers lost tracking)
+app.post('/api/send-cv/mark-sent-bulk', (req, res) => {
+  const { entries } = req.body;
+  if (!Array.isArray(entries)) return res.status(400).json({ error: 'entries array required' });
+  const sent = loadSentEmails();
+  let added = 0;
+  for (const e of entries) {
+    if (!e.email || !e.email.includes('@')) continue;
+    const em = String(e.email).toLowerCase().trim();
+    const key = `${em}|||${(e.title || '').toLowerCase()}`;
+    if (!sent.some(s => s.key === key)) {
+      sent.push({
+        key,
+        email: em,
+        title: e.title || '',
+        company: e.company || '',
+        sentAt: e.sentAt || new Date().toISOString(),
+        via: 'outlook-sent-sync'
+      });
+      added++;
+    }
+  }
+  saveSentEmails(sent);
+  res.json({ added, total: sent.length });
+});
+
+// Generate PowerShell that reads Outlook Sent Items folder for TODAY's
+// Application emails and reports them so we can recover any sends that
+// failed to call mark-sent (e.g., old script sessions with wrong URL).
+app.get('/api/send-cv/scan-sent', (req, res) => {
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const protocol = req.get('x-forwarded-proto') || req.protocol;
+  const publicBase = process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+
+  const script = `$ErrorActionPreference = 'Continue'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+Write-Host '' ; Write-Host '========================================' -ForegroundColor Cyan
+Write-Host '  Wzyfa - Sync Outlook Sent Folder' -ForegroundColor Cyan
+Write-Host '========================================' -ForegroundColor Cyan ; Write-Host ''
+
+try {
+  $Outlook = New-Object -ComObject Outlook.Application
+  $ns = $Outlook.GetNamespace('MAPI')
+  $sent = $ns.GetDefaultFolder(5)  # olFolderSentMail
+  Write-Host ('Sent folder: ' + $sent.Items.Count + ' total messages') -ForegroundColor Green
+} catch {
+  Write-Host ('ERROR: ' + $_) -ForegroundColor Red
+  return
+}
+
+$today = (Get-Date).Date
+$found = New-Object System.Collections.Generic.List[hashtable]
+$items = $sent.Items
+try { $items.Sort('[SentOn]', $true) } catch {}
+
+$checked = 0
+foreach ($item in $items) {
+  $checked++
+  if ($checked -gt 1000) { break }
+  try {
+    if ($item.Class -ne 43) { continue }
+    $when = $null
+    try { $when = $item.SentOn } catch {}
+    if (-not $when) { continue }
+    if ($when -lt $today) { break }
+    $subj = ''
+    try { $subj = $item.Subject } catch {}
+    if (-not ($subj -match '^Application')) { continue }
+    foreach ($r in $item.Recipients) {
+      $addr = $null
+      try { $addr = $r.Address } catch {}
+      if (-not $addr) { try { $addr = $r.Name } catch {} }
+      try {
+        $PR_SMTP = 'http://schemas.microsoft.com/mapi/proptag/0x39FE001E'
+        $smtp = $r.PropertyAccessor.GetProperty($PR_SMTP)
+        if ($smtp) { $addr = $smtp }
+      } catch {}
+      if ($addr -and $addr -match '@') {
+        $title = $subj -replace '^Application\\s*[\\u2013\\-]?\\s*', ''
+        $found.Add(@{
+          email = $addr.ToLower()
+          title = $title
+          company = ''
+          sentAt = $when.ToString('yyyy-MM-ddTHH:mm:ss.000Z')
+        })
+      }
+    }
+  } catch {}
+}
+
+Write-Host ('Application emails sent today: ' + $found.Count) -ForegroundColor Cyan
+if ($found.Count -eq 0) { return }
+$found | ForEach-Object { Write-Host ('  - ' + $_.email) -ForegroundColor Gray }
+
+Write-Host '' ; Write-Host 'Syncing with server...' -ForegroundColor Yellow
+try {
+  $payload = @{ entries = $found } | ConvertTo-Json -Compress
+  $resp = Invoke-RestMethod -Uri '${publicBase}/api/send-cv/mark-sent-bulk' -Method Post -Body $payload -ContentType 'application/json'
+  Write-Host ('Added ' + $resp.added + ' new records. Total sent-history: ' + $resp.total) -ForegroundColor Green
+} catch {
+  Write-Host ('ERROR: ' + $_) -ForegroundColor Red
+}
+`;
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(script);
+});
+
+// ─── Careers (public CV upload + admin) ────────────────────────────────────
+
+function jobIdFromUrl(url) {
+  return crypto.createHash('sha1').update(String(url || '')).digest('hex').slice(0, 12);
+}
+
+// Add stable `id` field to a job on demand (jobs.json entries don't store IDs).
+function enrichJob(j) {
+  if (!j) return null;
+  const id = j.id || jobIdFromUrl(j.url || (j.title + '|' + j.company));
+  return { ...j, id };
+}
+
+function findJobById(id) {
+  const emailJobs = loadEmailJobs ? loadEmailJobs() : [];
+  const jobs = loadJobs();
+  const all = [...emailJobs, ...jobs];
+  for (const j of all) {
+    if (jobIdFromUrl(j.url || (j.title + '|' + j.company)) === id) return enrichJob(j);
+  }
+  return null;
+}
+
+function loadLeads() {
+  try {
+    if (fs.existsSync(LEADS_FILE)) return JSON.parse(fs.readFileSync(LEADS_FILE, 'utf-8'));
+  } catch (_) {}
+  return [];
+}
+function saveLeads(leads) {
+  fs.writeFileSync(LEADS_FILE, JSON.stringify(leads, null, 2), 'utf-8');
+}
+
+// In-memory upload — we forward to Drive and/or write to CAREERS_CV_DIR.
+const uploadCareersCv = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.pdf', '.doc', '.docx'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error('Only PDF, DOC, DOCX allowed'));
+  },
+});
+
+const MIME_BY_EXT = {
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+// Basic Auth guard for /careers/admin and /api/careers/leads*
+function requireAdmin(req, res, next) {
+  const pass = process.env.ADMIN_PASSWORD;
+  if (!pass) {
+    return res
+      .status(503)
+      .send('ADMIN_PASSWORD env var is not set — admin area disabled. Set it and restart.');
+  }
+  const hdr = req.headers.authorization || '';
+  if (!hdr.startsWith('Basic ')) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="wzyfa-admin"');
+    return res.status(401).send('Auth required');
+  }
+  try {
+    const decoded = Buffer.from(hdr.slice(6), 'base64').toString('utf-8');
+    const [, providedPass] = decoded.split(':');
+    if (providedPass !== pass) {
+      res.setHeader('WWW-Authenticate', 'Basic realm="wzyfa-admin"');
+      return res.status(401).send('Wrong password');
+    }
+    return next();
+  } catch (_) {
+    return res.status(400).send('Bad auth header');
+  }
+}
+
+app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '7d' }));
+
+app.get('/careers', (req, res) => {
+  res.sendFile(path.join(__dirname, 'careers.html'));
+});
+
+app.get('/api/careers/job/:id', (req, res) => {
+  const job = findJobById(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json({
+    id: job.id,
+    title: job.title || '',
+    company: job.company || '',
+    location: job.location || job.country || '',
+    workMode: job.workMode || '',
+    email: job.email || '',
+    url: job.url || '',
+  });
+});
+
+app.post('/api/careers/apply', uploadCareersCv.single('cv'), async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim().slice(0, 100);
+    const email = String(req.body.email || '').trim().slice(0, 120);
+    const phone = String(req.body.phone || '').trim().slice(0, 30);
+    const position = String(req.body.position || '').trim().slice(0, 120);
+    const notes = String(req.body.notes || '').trim().slice(0, 500);
+    const jobId = String(req.body.jobId || '').trim().slice(0, 40) || null;
+
+    if (!name || !email || !position) {
+      return res.status(400).json({ error: 'أكمل الاسم والإيميل والوظيفة' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'الإيميل غير صحيح' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'أرفق ملف CV' });
+
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const mime = MIME_BY_EXT[ext] || req.file.mimetype;
+    const buffer = req.file.buffer;
+
+    const id = crypto.randomBytes(8).toString('hex');
+    const date = new Date().toISOString().slice(0, 10);
+    const safeName = name.replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 60) || 'متقدم';
+    const safePosition = position.replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 60) || 'وظيفة';
+    const driveFileName = `${safePosition} — ${safeName} — ${date}${ext}`;
+
+    let localFile = null;
+    try {
+      const localPath = path.join(CAREERS_CV_DIR, id + ext);
+      fs.writeFileSync(localPath, buffer);
+      localFile = path.basename(localPath);
+    } catch (err) {
+      console.error('[careers] local save failed:', err);
+    }
+
+    let job = null;
+    if (jobId) job = findJobById(jobId);
+
+    let driveLink = null;
+    let driveFileId = null;
+    if (isDriveConfigured()) {
+      try {
+        const description = [
+          `الاسم: ${name}`,
+          `الإيميل: ${email}`,
+          phone && `الموبايل: ${phone}`,
+          `الوظيفة: ${position}`,
+          job && job.title && `من بوست: ${job.title}${job.company ? ' — ' + job.company : ''}`,
+          notes && `ملاحظات: ${notes}`,
+        ].filter(Boolean).join('\n');
+        const uploaded = await uploadToDrive({
+          buffer, fileName: driveFileName, mimeType: mime, description,
+        });
+        driveLink = uploaded.webViewLink;
+        driveFileId = uploaded.id;
+      } catch (err) {
+        console.error('[careers] drive upload failed:', err.message);
+      }
+    }
+
+    if (!localFile && !driveLink) {
+      return res.status(502).json({ error: 'تعذّر حفظ الملف، جرّب مرة تانية' });
+    }
+
+    const lead = {
+      id, name, email, phone, position, notes,
+      jobId: jobId || null,
+      jobTitle: job ? job.title : null,
+      jobCompany: job ? job.company : null,
+      jobUrl: job ? job.url : null,
+      localFile, driveLink, driveFileId,
+      ext,
+      submittedAt: new Date().toISOString(),
+      ua: (req.headers['user-agent'] || '').slice(0, 200),
+    };
+    const leads = loadLeads();
+    leads.push(lead);
+    saveLeads(leads);
+
+    console.log(`[careers] new lead: ${name} <${email}> for "${position}"${jobId ? ' (job ' + jobId + ')' : ''}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[careers] apply error:', err);
+    res.status(500).json({ error: 'حدث خطأ داخلي' });
+  }
+});
+
+app.get('/careers/admin', requireAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, 'careers-admin.html'));
+});
+
+app.get('/api/careers/leads', requireAdmin, (req, res) => {
+  res.json(loadLeads());
+});
+
+// ─── Social auto-poster ─────────────────────────────────────────────────
+
+function loadSocialPosted() {
+  try {
+    if (fs.existsSync(SOCIAL_POSTED_FILE)) return JSON.parse(fs.readFileSync(SOCIAL_POSTED_FILE, 'utf-8'));
+  } catch (_) {}
+  return { posted: {}, history: [] };
+}
+function saveSocialPosted(state) {
+  fs.writeFileSync(SOCIAL_POSTED_FILE, JSON.stringify(state, null, 2), 'utf-8');
+}
+
+// Score jobs for posting — freshest first, HR-email jobs preferred.
+function scoreJobForPost(job) {
+  let score = 0;
+  if (job.email) score += 100;
+  if (job.postedDate || job.scrapedAt) {
+    const d = new Date(job.postedDate || job.scrapedAt).getTime();
+    const daysAgo = (Date.now() - d) / 86400_000;
+    score += Math.max(0, 30 - daysAgo);
+  }
+  if (job.workMode === 'remote') score += 5;
+  return score;
+}
+
+function pickJobsToPost(limit) {
+  const state = loadSocialPosted();
+  const posted = state.posted || {};
+  // Only jobs with an HR email are eligible — the post always shows a
+  // "Send your CV" line and would break without one.
+  const emailJobs = loadEmailJobs().map(enrichJob);
+  const jobs = loadJobs().map(enrichJob);
+  const all = [...emailJobs, ...jobs].filter(j => j && j.id && j.email && !posted[j.id]);
+  all.sort((a, b) => scoreJobForPost(b) - scoreJobForPost(a));
+  return all.slice(0, limit);
+}
+
+async function postJobToChannels(job) {
+  const results = { jobId: job.id, title: job.title, at: new Date().toISOString(), facebook: null, x: null };
+
+  if (isFacebookConfigured()) {
+    try {
+      const message = formatForFacebook(job);
+      const link = `${process.env.PUBLIC_BASE_URL || 'https://wzyfa.com'}/careers?job=${job.id}`;
+      const r = await postToFacebook({ message, link });
+      results.facebook = { ok: true, id: r.id };
+      console.log(`[social] FB ok — job ${job.id} → ${r.id}`);
+    } catch (err) {
+      results.facebook = { ok: false, error: err.message };
+      console.error(`[social] FB fail — job ${job.id}: ${err.message}`);
+    }
+  } else {
+    results.facebook = { ok: false, error: 'not configured' };
+  }
+
+  if (isXConfigured()) {
+    try {
+      const text = formatForX(job);
+      const r = await postToX({ text });
+      results.x = { ok: true, id: r.id };
+      console.log(`[social] X ok — job ${job.id} → ${r.id}`);
+    } catch (err) {
+      results.x = { ok: false, error: err.message };
+      console.error(`[social] X fail — job ${job.id}: ${err.message}`);
+    }
+  } else {
+    results.x = { ok: false, error: 'not configured' };
+  }
+
+  return results;
+}
+
+// Main daily runner. Picks N jobs, posts each with a small delay to avoid
+// looking bot-like. Marks a job as "posted" if AT LEAST one channel succeeded
+// — that way a lone Facebook success still frees us from re-posting when X
+// later comes online, and vice-versa.
+async function runDailyPost(count = 5) {
+  if (!isFacebookConfigured() && !isXConfigured()) {
+    console.log('[social] no channels configured — skipping daily post');
+    return { skipped: true, reason: 'no channels configured' };
+  }
+  const jobs = pickJobsToPost(count);
+  if (jobs.length === 0) {
+    console.log('[social] no unposted jobs available');
+    return { skipped: true, reason: 'no unposted jobs' };
+  }
+  console.log(`[social] posting ${jobs.length} job(s)`);
+  const state = loadSocialPosted();
+  const runResults = [];
+  for (let i = 0; i < jobs.length; i++) {
+    const job = jobs[i];
+    const r = await postJobToChannels(job);
+    runResults.push(r);
+    if ((r.facebook && r.facebook.ok) || (r.x && r.x.ok)) {
+      state.posted[job.id] = { at: r.at, fb: r.facebook && r.facebook.ok, x: r.x && r.x.ok };
+    }
+    state.history = (state.history || []).concat(r).slice(-500);
+    saveSocialPosted(state);
+    // 60–180s jitter between posts — feels human, well below API limits.
+    if (i < jobs.length - 1) {
+      const delay = 60_000 + Math.floor(Math.random() * 120_000);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  return { posted: runResults.length, results: runResults };
+}
+
+app.get('/api/social/status', (req, res) => {
+  const state = loadSocialPosted();
+  res.json({
+    facebook: { configured: isFacebookConfigured() },
+    x: { configured: isXConfigured() },
+    postedCount: Object.keys(state.posted || {}).length,
+    lastRun: (state.history && state.history[state.history.length - 1]) || null,
+  });
+});
+
+app.get('/api/social/history', requireAdmin, (req, res) => {
+  res.json(loadSocialPosted().history || []);
+});
+
+app.post('/api/social/post-now', requireAdmin, async (req, res) => {
+  const count = Math.max(1, Math.min(10, Number(req.body.count) || 3));
+  try {
+    const result = await runDailyPost(count);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Preview what would be posted next, without posting.
+app.get('/api/social/preview', requireAdmin, (req, res) => {
+  const count = Math.max(1, Math.min(20, Number(req.query.count) || 5));
+  const jobs = pickJobsToPost(count);
+  res.json(jobs.map(j => ({
+    id: j.id, title: j.title, company: j.company,
+    email: j.email || null, url: j.url,
+    facebook: formatForFacebook(j),
+    x: formatForX(j),
+  })));
+});
+
+// Simulate a post format with a synthetic job — useful when there are no
+// real email-jobs in the DB yet and you want to see what an actual post
+// will look like. Admin-only so it can't be spammed for reconnaissance.
+app.get('/api/social/simulate', requireAdmin, (req, res) => {
+  const sample = {
+    id: 'sample123',
+    title: req.query.title || 'Data Analyst',
+    company: req.query.company || 'Vodafone Egypt',
+    location: req.query.location || 'Cairo, Egypt',
+    workMode: req.query.workMode || 'hybrid',
+    email: req.query.email || 'hr@vodafone.com.eg',
+  };
+  res.json({
+    sample,
+    facebook: formatForFacebook(sample),
+    x: formatForX(sample),
+    xCharCount: formatForX(sample).length,
+  });
+});
+
+app.get('/api/careers/leads/:id/cv', requireAdmin, (req, res) => {
+  const lead = loadLeads().find(l => l.id === req.params.id);
+  if (!lead || !lead.localFile) return res.status(404).send('Not found');
+  const filePath = path.join(CAREERS_CV_DIR, lead.localFile);
+  if (!fs.existsSync(filePath)) return res.status(404).send('Missing on disk');
+  const downloadName = `${lead.name} — ${lead.position}${lead.ext || ''}`.replace(/[/\\?%*:|"<>]/g, '_');
+  res.download(filePath, downloadName);
+});
+
 // ─── Start ───
 app.listen(PORT, () => {
   console.log(`[Server] وظيفة running on http://localhost:${PORT}`);
@@ -2373,5 +3194,42 @@ app.listen(PORT, () => {
   cron.schedule('0 2,8,14,20 * * *', () => {
     console.log('[Cron] Scheduled email jobs scan triggered');
     runEmailJobsScan();
+  });
+
+  // Daily social auto-post at 09:00 UTC (12:00 Cairo). Count is 3–10 random —
+  // varying volume looks more organic than a fixed number every day.
+  cron.schedule('0 9 * * *', () => {
+    const count = 3 + Math.floor(Math.random() * 8);
+    console.log(`[Cron] Daily social post — ${count} job(s)`);
+    runDailyPost(count).catch(err => console.error('[Cron] social post failed:', err));
+  });
+
+  // Weekly FB token refresh — Sunday 03:00 UTC. FB long-lived page tokens
+  // last ~60 days; refreshing weekly means we never risk expiry, and we
+  // persist the new value back to .env so it survives restarts.
+  cron.schedule('0 3 * * 0', async () => {
+    try {
+      const result = await refreshFacebookToken();
+      if (result.ok) {
+        try {
+          const envPath = path.join(__dirname, '.env');
+          if (fs.existsSync(envPath)) {
+            const content = fs.readFileSync(envPath, 'utf-8');
+            const updated = content.replace(
+              /^FB_PAGE_ACCESS_TOKEN=.*$/m,
+              `FB_PAGE_ACCESS_TOKEN=${result.token}`
+            );
+            fs.writeFileSync(envPath, updated, 'utf-8');
+          }
+        } catch (err) {
+          console.error('[Cron] FB token — .env write failed (in-memory refresh still applied):', err.message);
+        }
+        console.log(`[Cron] FB token refreshed — expires in ${Math.round(result.expiresIn / 86400)}d`);
+      } else {
+        console.log('[Cron] FB token refresh skipped —', result.reason);
+      }
+    } catch (err) {
+      console.error('[Cron] FB token refresh failed:', err.message);
+    }
   });
 });
