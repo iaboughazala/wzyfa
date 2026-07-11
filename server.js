@@ -3119,7 +3119,23 @@ app.get('/api/social/history', requireAdmin, (req, res) => {
 
 app.post('/api/social/post-now', requireAdmin, async (req, res) => {
   const count = Math.max(1, Math.min(10, Number(req.body.count) || 3));
+  const jobId = req.body.jobId ? String(req.body.jobId).trim() : null;
   try {
+    if (jobId) {
+      // Targeted post — bypass the daily picker. Used for admin dry-runs
+      // and for retrying a specific job whose data was cleaned up.
+      const job = findJobById(jobId);
+      if (!job) return res.status(404).json({ error: 'Job not found' });
+      if (!job.email) return res.status(400).json({ error: 'Job has no email — post format requires one' });
+      const r = await postJobToChannels(job);
+      const state = loadSocialPosted();
+      if ((r.facebook && r.facebook.ok) || (r.x && r.x.ok)) {
+        state.posted[job.id] = { at: r.at, fb: r.facebook && r.facebook.ok, x: r.x && r.x.ok };
+      }
+      state.history = (state.history || []).concat(r).slice(-500);
+      saveSocialPosted(state);
+      return res.json({ posted: 1, results: [r] });
+    }
     const result = await runDailyPost(count);
     res.json(result);
   } catch (err) {
