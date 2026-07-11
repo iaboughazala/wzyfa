@@ -16,6 +16,10 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          # docker build reinstalls chromium (~500MB) when the node:18-slim
+          # base image gets an update — that alone can hit the default 10m.
+          # 30m gives comfortable headroom without masking a real hang.
+          command_timeout: 30m
           # Forward env vars so the remote script can reference them as $VAR
           # without embedding the values in the command line.
           envs: ADMIN_PASSWORD,GOOGLE_DRIVE_CLIENT_ID,GOOGLE_DRIVE_CLIENT_SECRET,GOOGLE_DRIVE_REFRESH_TOKEN,GOOGLE_DRIVE_FOLDER_ID,FB_APP_ID,FB_APP_SECRET,FB_PAGE_ID,FB_PAGE_ACCESS_TOKEN
