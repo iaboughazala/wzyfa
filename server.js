@@ -2882,8 +2882,60 @@ function requireAdmin(req, res, next) {
 
 app.use('/assets', express.static(path.join(__dirname, 'assets'), { maxAge: '7d' }));
 
+// Cache the HTML in memory — it changes only on deploy, so we don't need
+// to hit disk on every /careers request.
+let careersHtmlCache = null;
+function loadCareersHtml() {
+  if (!careersHtmlCache) {
+    careersHtmlCache = fs.readFileSync(path.join(__dirname, 'careers.html'), 'utf-8');
+  }
+  return careersHtmlCache;
+}
+
+function escapeAttr(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// Build the Open Graph values used for the FB / X / LinkedIn preview card.
+// When a specific job is being shared, we surface its title/company/location
+// so the card shows "🎯 Data Analyst — Vodafone" instead of the generic
+// site name. Facebook caches per-URL, so `?job=<id>` gets its own preview.
+function buildCareersOg(job, baseUrl) {
+  const defaults = {
+    title: 'قدّم على وظيفة | Wzyfa',
+    description: 'ارفع سيرتك الذاتية عندنا، ولو في تطابق مع فرصة مناسبة هنتواصل معك.',
+    url: baseUrl + '/careers',
+    image: baseUrl + '/assets/logo.png',
+  };
+  if (!job) return defaults;
+  const parts = [];
+  if (job.company) parts.push(job.company);
+  if (job.location || job.country) parts.push(job.location || job.country);
+  const meta = parts.join(' • ');
+  return {
+    title: job.title ? `${job.title} — قدّم دلوقتي` : defaults.title,
+    description: meta ? `${meta} — ارفع سيرتك الذاتية والتحق بالفريق.` : defaults.description,
+    url: baseUrl + '/careers?job=' + encodeURIComponent(job.id),
+    image: defaults.image,
+  };
+}
+
 app.get('/careers', (req, res) => {
-  res.sendFile(path.join(__dirname, 'careers.html'));
+  const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const jobId = req.query.job ? String(req.query.job).slice(0, 40) : null;
+  const job = jobId ? findJobById(jobId) : null;
+  const og = buildCareersOg(job, baseUrl);
+  const html = loadCareersHtml()
+    .replace(/\{\{OG_TITLE\}\}/g, escapeAttr(og.title))
+    .replace(/\{\{OG_DESCRIPTION\}\}/g, escapeAttr(og.description))
+    .replace(/\{\{OG_URL\}\}/g, escapeAttr(og.url))
+    .replace(/\{\{OG_IMAGE\}\}/g, escapeAttr(og.image));
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
 });
 
 app.get('/api/careers/job/:id', (req, res) => {
