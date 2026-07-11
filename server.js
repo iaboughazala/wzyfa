@@ -2909,10 +2909,10 @@ app.post('/api/careers/apply', uploadCareersCv.single('cv'), async (req, res) =>
     const notes = String(req.body.notes || '').trim().slice(0, 500);
     const jobId = String(req.body.jobId || '').trim().slice(0, 40) || null;
 
-    if (!name || !email || !position) {
-      return res.status(400).json({ error: 'أكمل الاسم والإيميل والوظيفة' });
+    if (!name || !position) {
+      return res.status(400).json({ error: 'أكمل الاسم والوظيفة' });
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ error: 'الإيميل غير صحيح' });
     }
     if (!req.file) return res.status(400).json({ error: 'أرفق ملف CV' });
