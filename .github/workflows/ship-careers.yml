@@ -35,7 +35,10 @@ jobs:
             echo "════════ 4. Add /careers + /assets + /privacy locations (idempotent) ════════"
             # /privacy is new — add it independently of the /careers check
             # so we can layer it on to configs that already have /careers.
-            if ! sudo grep -q "location /privacy" "$NGINX_FILE"; then
+            # Match either `location /privacy` or `location = /privacy` — we
+            # emit the "= /" form but a hand-edited variant should also be
+            # respected as "already there".
+            if ! sudo grep -qE "location([[:space:]]+=)?[[:space:]]+/privacy" "$NGINX_FILE"; then
               PRIVACY_BLOCK='
                   location = /privacy {
                       proxy_pass http://127.0.0.1:3000;
