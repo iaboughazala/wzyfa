@@ -18,6 +18,7 @@ const {
   isFacebookConfigured, postToFacebook, refreshFacebookToken,
   isXConfigured, postToX,
   formatForFacebook, formatForX,
+  isReal, companyFromEmail,
 } = require('./lib/social-poster');
 
 const app = express();
@@ -2913,8 +2914,10 @@ function buildCareersOg(job, baseUrl) {
   };
   if (!job) return defaults;
   const parts = [];
-  if (job.company) parts.push(job.company);
-  if (job.location || job.country) parts.push(job.location || job.country);
+  const company = isReal(job.company) ? job.company : companyFromEmail(job.email);
+  if (company) parts.push(company);
+  const location = job.location || job.country;
+  if (isReal(location)) parts.push(location);
   const meta = parts.join(' • ');
   return {
     title: job.title ? `${job.title} — قدّم دلوقتي` : defaults.title,
