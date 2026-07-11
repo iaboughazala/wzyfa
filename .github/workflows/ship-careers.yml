@@ -128,7 +128,12 @@ jobs:
             EOF
 
             echo "════════ 8. Rebuild + restart wzyfa-search ════════"
-            docker compose up -d --build
+            # `docker compose up --build` sometimes hits an orphan-name
+            # conflict when a previous run's temp container is still around
+            # ("wzyfa-search is already in use"). Force a clean stop first
+            # and pass --remove-orphans so we always start from a known state.
+            docker compose down --remove-orphans || true
+            docker compose up -d --build --force-recreate
 
             echo "════════ 9. Verify ════════"
             sleep 5
