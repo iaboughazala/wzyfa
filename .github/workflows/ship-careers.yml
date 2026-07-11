@@ -1,0 +1,155 @@
+name: Ship /careers (nginx + docker restart)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ship
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          command_timeout: 30m
+          envs: ADMIN_PASSWORD,GOOGLE_DRIVE_CLIENT_ID,GOOGLE_DRIVE_CLIENT_SECRET,GOOGLE_DRIVE_REFRESH_TOKEN,GOOGLE_DRIVE_FOLDER_ID,FB_APP_ID,FB_APP_SECRET,FB_PAGE_ID,FB_PAGE_ACCESS_TOKEN
+          script: |
+            set -e
+            NGINX_FILE=/etc/nginx/sites-enabled/wzyfa
+            NGINX_BAK=/tmp/wzyfa-nginx.bak.$(date +%s)
+
+            echo "════════ 1. Free disk before ════════"
+            df -h /
+
+            echo "════════ 2. Current nginx wzyfa config ════════"
+            sudo cat "$NGINX_FILE"
+
+            echo ""
+            echo "════════ 3. Backup nginx config ════════"
+            sudo cp "$NGINX_FILE" "$NGINX_BAK"
+            echo "backed up to $NGINX_BAK"
+
+            echo "════════ 4. Add /careers + /assets locations (idempotent) ════════"
+            if sudo grep -q "location /careers" "$NGINX_FILE"; then
+              echo "already has /careers block — skipping"
+            else
+              # Write the new blocks to a temp file (single-quoted heredoc so
+              # nginx's $host / $scheme stay literal), then use awk to insert
+              # them right after the existing `location /api/` block — that
+              # groups all wzyfa-search routes together.
+              cat > /tmp/careers-blocks.conf <<'BLOCK'
+
+                  location /careers {
+                      proxy_pass http://127.0.0.1:3000;
+                      proxy_set_header Host $host;
+                      proxy_set_header X-Real-IP $remote_addr;
+                      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto $scheme;
+                  }
+
+                  location /assets/ {
+                      proxy_pass http://127.0.0.1:3000;
+                      proxy_set_header Host $host;
+                  }
+            BLOCK
+              # awk state machine: find `location /api/ {`, count braces until
+              # matching `}`, then print the extra blocks once.
+              sudo awk -v extra_file=/tmp/careers-blocks.conf '
+                BEGIN {
+                  while ((getline line < extra_file) > 0) extra = extra line ORS
+                  close(extra_file)
+                  state = "search"
+                }
+                {
+                  print
+                  if (state == "search" && $0 ~ /location \/api\/ *\{/) {
+                    state = "inside"; depth = 1
+                    next
+                  }
+                  if (state == "inside") {
+                    for (i = 1; i <= length($0); i++) {
+                      c = substr($0, i, 1)
+                      if (c == "{") depth++
+                      else if (c == "}") {
+                        depth--
+                        if (depth == 0) {
+                          printf "%s", extra
+                          state = "done"
+                          break
+                        }
+                      }
+                    }
+                  }
+                }
+              ' "$NGINX_FILE" | sudo tee "${NGINX_FILE}.new" > /dev/null
+              sudo mv "${NGINX_FILE}.new" "$NGINX_FILE"
+              rm -f /tmp/careers-blocks.conf
+              echo "config updated"
+            fi
+
+            echo ""
+            echo "════════ 5. Test nginx config ════════"
+            if sudo nginx -t 2>&1; then
+              echo "config OK — reloading"
+              sudo nginx -s reload
+            else
+              echo "config broke — rolling back"
+              sudo cp "$NGINX_BAK" "$NGINX_FILE"
+              sudo nginx -t
+              exit 1
+            fi
+
+            echo ""
+            echo "════════ 6. Show nginx config after edit ════════"
+            sudo cat "$NGINX_FILE"
+
+            echo ""
+            echo "════════ 7. Update wzyfa-search code + env ════════"
+            cd /opt/wzyfa-search
+            git fetch origin main
+            git reset --hard origin/main
+
+            touch .env
+            chmod 600 .env
+            cat > .env <<EOF
+            ADMIN_PASSWORD=${ADMIN_PASSWORD}
+            PUBLIC_BASE_URL=https://wzyfa.com
+            GOOGLE_DRIVE_CLIENT_ID=${GOOGLE_DRIVE_CLIENT_ID}
+            GOOGLE_DRIVE_CLIENT_SECRET=${GOOGLE_DRIVE_CLIENT_SECRET}
+            GOOGLE_DRIVE_REFRESH_TOKEN=${GOOGLE_DRIVE_REFRESH_TOKEN}
+            GOOGLE_DRIVE_FOLDER_ID=${GOOGLE_DRIVE_FOLDER_ID}
+            FB_APP_ID=${FB_APP_ID}
+            FB_APP_SECRET=${FB_APP_SECRET}
+            FB_PAGE_ID=${FB_PAGE_ID}
+            FB_PAGE_ACCESS_TOKEN=${FB_PAGE_ACCESS_TOKEN}
+            EOF
+
+            echo "════════ 8. Rebuild + restart wzyfa-search ════════"
+            docker compose up -d --build
+
+            echo "════════ 9. Verify ════════"
+            sleep 5
+            docker compose ps wzyfa-search
+            echo "--- careers page ---"
+            curl -s -o /dev/null -w "%{http_code}\n" https://wzyfa.com/careers
+            echo "--- assets/logo ---"
+            curl -s -o /dev/null -w "%{http_code}\n" https://wzyfa.com/assets/logo.png
+            echo "--- social status ---"
+            curl -s https://wzyfa.com/api/social/status
+            echo ""
+            echo "--- container log tail ---"
+            docker logs --tail 10 wzyfa-search 2>&1
+            echo "════════ Done ════════"
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          FB_APP_ID: ${{ secrets.FB_APP_ID }}
+          FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
