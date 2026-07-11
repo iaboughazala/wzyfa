@@ -3277,19 +3277,34 @@ app.listen(PORT, () => {
     runEmailJobsScan();
   });
 
-  // Daily social auto-post at 09:00 UTC (12:00 Cairo). Count is 3–10 random —
-  // varying volume looks more organic than a fixed number every day.
-  cron.schedule('0 9 * * *', async () => {
-    const count = 3 + Math.floor(Math.random() * 8);
-    console.log(`[Cron] Daily social post — ${count} job(s)`);
-    try {
-      const result = await runDailyPost(count);
-      notifyPostRun(result);
-    } catch (err) {
-      console.error('[Cron] social post failed:', err);
-      notifyError('Daily social post', err);
-    }
-  });
+  // Spread posts across three engagement peaks in Cairo time so the feed
+  // doesn't dump 5+ jobs in a 30-minute window (which reads as bot-y and
+  // gets throttled by FB's ranking). Each slot posts 1–3 random — the day
+  // still lands in the 3–9 total we've been running with.
+  //
+  // Times are UTC. Egypt runs EEST (UTC+3) during summer / EET (UTC+2)
+  // otherwise. The offsets here target ~10 / 14 / 20 Cairo year-round —
+  // acceptable ±1h drift is fine for engagement, and it means we don't need
+  // TZ-aware cron.
+  const SLOTS = [
+    { label: 'morning',   cron: '0 7 * * *'  },  // 10:00 EEST / 09:00 EET
+    { label: 'afternoon', cron: '0 11 * * *' },  // 14:00 EEST / 13:00 EET
+    { label: 'evening',   cron: '0 17 * * *' },  // 20:00 EEST / 19:00 EET
+  ];
+  for (const slot of SLOTS) {
+    cron.schedule(slot.cron, async () => {
+      const count = 1 + Math.floor(Math.random() * 3); // 1–3 per slot
+      console.log(`[Cron] ${slot.label} slot — ${count} job(s)`);
+      try {
+        const result = await runDailyPost(count);
+        result.slot = slot.label;
+        notifyPostRun(result);
+      } catch (err) {
+        console.error(`[Cron] ${slot.label} slot failed:`, err);
+        notifyError(`${slot.label} slot`, err);
+      }
+    });
+  }
 
   // Weekly FB token refresh — Sunday 03:00 UTC. FB long-lived page tokens
   // last ~60 days; refreshing weekly means we never risk expiry, and we
