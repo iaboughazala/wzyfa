@@ -1,0 +1,73 @@
+name: VPS Diagnostic (safe read-only)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH diagnostic
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          command_timeout: 5m
+          script: |
+            set +e
+            echo "════════════════════════════════════════"
+            echo "1. Disk usage"
+            echo "════════════════════════════════════════"
+            df -h /
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "2. Docker disk usage"
+            echo "════════════════════════════════════════"
+            docker system df
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "3. Running containers"
+            echo "════════════════════════════════════════"
+            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "4. wzyfa-search container status"
+            echo "════════════════════════════════════════"
+            docker inspect wzyfa-search --format 'State: {{.State.Status}} | Started: {{.State.StartedAt}} | Restarting: {{.State.Restarting}} | ExitCode: {{.State.ExitCode}}' 2>&1 || echo "container missing"
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "5. wzyfa-search last 20 log lines"
+            echo "════════════════════════════════════════"
+            docker logs --tail 20 wzyfa-search 2>&1 || echo "no logs"
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "6. All nginx sites (looking for /careers)"
+            echo "════════════════════════════════════════"
+            grep -rn "careers\|wzyfa" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | head -30
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "7. nginx wzyfa site full config"
+            echo "════════════════════════════════════════"
+            ls /etc/nginx/sites-enabled/ 2>/dev/null
+            for f in /etc/nginx/sites-enabled/*wzyfa* /etc/nginx/sites-enabled/*.conf; do
+              if [ -f "$f" ]; then
+                echo "--- $f ---"
+                cat "$f" 2>/dev/null | grep -E "location|proxy_pass|server_name" | head -30
+              fi
+            done
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "8. /opt directory (projects layout)"
+            echo "════════════════════════════════════════"
+            ls -la /opt/ 2>/dev/null
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "9. Docker images (biggest first)"
+            echo "════════════════════════════════════════"
+            docker images --format 'table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}' | sort -k2 -h -r | head -15
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "Diagnostic complete"
+            echo "════════════════════════════════════════"
