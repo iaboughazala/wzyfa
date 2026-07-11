@@ -2927,6 +2927,10 @@ function buildCareersOg(job, baseUrl) {
   };
 }
 
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'privacy.html'));
+});
+
 app.get('/careers', (req, res) => {
   const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
   const jobId = req.query.job ? String(req.query.job).slice(0, 40) : null;
