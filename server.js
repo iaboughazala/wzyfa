@@ -3182,6 +3182,24 @@ app.get('/api/social/history', requireAdmin, (req, res) => {
   res.json(loadSocialPosted().history || []);
 });
 
+// Manual override for the "posted" set. Used when a post landed on FB but
+// our client timed out before receiving the ID, so state.posted didn't get
+// updated and the cron would try again tomorrow.
+app.post('/api/social/mark-posted', requireAdmin, (req, res) => {
+  const jobId = req.body && req.body.jobId ? String(req.body.jobId).trim() : null;
+  if (!jobId) return res.status(400).json({ error: 'jobId required' });
+  const state = loadSocialPosted();
+  state.posted = state.posted || {};
+  state.posted[jobId] = {
+    at: new Date().toISOString(),
+    fb: true,
+    x: false,
+    manual: true,
+  };
+  saveSocialPosted(state);
+  res.json({ ok: true, posted: jobId });
+});
+
 app.post('/api/social/post-now', requireAdmin, async (req, res) => {
   const count = Math.max(1, Math.min(10, Number(req.body.count) || 3));
   const jobId = req.body.jobId ? String(req.body.jobId).trim() : null;
