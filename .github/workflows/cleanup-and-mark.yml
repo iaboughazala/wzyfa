@@ -1,0 +1,66 @@
+name: Cleanup docker + mark job posted
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: 'Job ID to mark as posted (adds to data/social-posted.json)'
+        required: true
+        default: '5e2bb1a5ad9b'
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup + mark
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          command_timeout: 10m
+          envs: JOB_ID
+          script: |
+            set -e
+            echo "════════ 1. Disk before ════════"
+            df -h /
+
+            echo "════════ 2. Docker cache before ════════"
+            docker system df
+
+            echo "════════ 3. Prune unused images / build cache / stopped containers ════════"
+            docker system prune -f
+            docker builder prune -af
+            docker image prune -af
+
+            echo "════════ 4. Disk after ════════"
+            df -h /
+            docker system df
+
+            echo "════════ 5. Mark job ${JOB_ID} as posted in social-posted.json ════════"
+            cd /opt/wzyfa-search
+            # jq -r merges in the new entry without touching the rest of the file
+            python3 - <<PYEOF
+            import json, os, datetime
+            p = 'data/social-posted.json'
+            jid = os.environ['JOB_ID']
+            with open(p) as f: d = json.load(f)
+            d.setdefault('posted', {})
+            d['posted'][jid] = {
+                'at': datetime.datetime.utcnow().isoformat() + 'Z',
+                'fb': True,
+                'x': False,
+                'manual': True,
+                'reason': 'FB post landed but our client timed out — confirmed on Page by admin',
+            }
+            with open(p, 'w') as f: json.dump(d, f, indent=2, ensure_ascii=False)
+            print(f'marked {jid} — total posted set: {len(d["posted"])}')
+            PYEOF
+
+            echo "════════ 6. Confirm entry ════════"
+            python3 -c "import json; d=json.load(open('data/social-posted.json')); print(json.dumps(d['posted'].get('${JOB_ID}'), indent=2, ensure_ascii=False))"
+
+            echo "════════ Done ════════"
+        env:
+          JOB_ID: ${{ inputs.jobId }}
