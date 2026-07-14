@@ -3109,7 +3109,15 @@ async function postJobToChannels(job) {
   if (isFacebookConfigured()) {
     try {
       const message = formatForFacebook(job);
-      const link = `${process.env.PUBLIC_BASE_URL || 'https://wzyfa.com'}/careers?job=${job.id}`;
+      // For scraped jobs the FB preview card should point at our /careers
+      // form. For sponsored posts, point at the brand's own site so the
+      // card renders THEIR og:image/title (Wasla logo, Finalizat logo, …)
+      // instead of the generic Wzyfa card. The CTA URL inside the message
+      // text is still the apply URL — that's what people copy/share.
+      const base = process.env.PUBLIC_BASE_URL || 'https://wzyfa.com';
+      const link = job.sponsor
+        ? (job.website ? `https://${job.website}` : job.applyUrl || `${base}/careers?job=${job.id}`)
+        : `${base}/careers?job=${job.id}`;
       const r = await postToFacebook({ message, link });
       results.facebook = { ok: true, id: r.id };
       console.log(`[social] FB ok — job ${job.id} → ${r.id}`);
