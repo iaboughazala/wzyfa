@@ -156,6 +156,19 @@ jobs:
             EOF
 
             echo "════════ 8. Rebuild + restart wzyfa-search ════════"
+            # Prune before build — the VPS runs many docker projects and
+            # accumulates dangling images / builder cache faster than we
+            # can spare. Two failed deploys in a row were caused by disk
+            # filling to 100% during layer export; this keeps the runway
+            # clear so builds don't fail on ENOSPC. Only unused artifacts
+            # are removed — nothing running is touched.
+            echo "--- disk before prune ---"
+            df -h / | tail -1
+            docker system prune -f
+            docker builder prune -f
+            echo "--- disk after prune ---"
+            df -h / | tail -1
+
             # `docker compose up --build` sometimes hits an orphan-name
             # conflict when a previous run's temp container is still around
             # ("wzyfa-search is already in use"). Force a clean stop first

@@ -3232,7 +3232,12 @@ app.post('/api/social/post-now', requireAdmin, async (req, res) => {
       // and for retrying a specific job whose data was cleaned up.
       const job = findJobById(jobId);
       if (!job) return res.status(404).json({ error: 'Job not found' });
-      if (!job.email) return res.status(400).json({ error: 'Job has no email — post format requires one' });
+      // Sponsors don't have an HR email but still have their own valid
+      // post format (Apply Now → sponsor URL). Only scraped jobs need an
+      // email for the "Send your CV" line.
+      if (!job.sponsor && !job.email) {
+        return res.status(400).json({ error: 'Job has no email — post format requires one' });
+      }
       const r = await postJobToChannels(job);
       const state = loadSocialPosted();
       if ((r.facebook && r.facebook.ok) || (r.x && r.x.ok)) {
