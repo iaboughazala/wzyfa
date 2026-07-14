@@ -2933,7 +2933,9 @@ function buildCareersOg(job, baseUrl) {
     title: job.title ? `${job.title} — قدّم دلوقتي` : defaults.title,
     description: meta ? `${meta} — ارفع سيرتك الذاتية والتحق بالفريق.` : defaults.description,
     url: baseUrl + '/careers?job=' + encodeURIComponent(job.id),
-    image: defaults.image,
+    // Sponsor jobs can carry their own logo — use it so the FB card looks
+    // brand-consistent instead of falling back to the generic Wzyfa mark.
+    image: job.ogImage || defaults.image,
   };
 }
 
@@ -3115,8 +3117,15 @@ async function postJobToChannels(job) {
       // instead of the generic Wzyfa card. The CTA URL inside the message
       // text is still the apply URL — that's what people copy/share.
       const base = process.env.PUBLIC_BASE_URL || 'https://wzyfa.com';
+      // For sponsors we prefer to point FB at the brand's own site so the
+      // preview card gets THEIR og data. Exception: sponsors that carry
+      // an ogImage (Rezolyzer, whose homepage's og:url points at a 404 —
+      // FB would render a broken card). Those route through wzyfa
+      // /careers, where buildCareersOg substitutes the sponsor's logo.
       const link = job.sponsor
-        ? (job.website ? `https://${job.website}` : job.applyUrl || `${base}/careers?job=${job.id}`)
+        ? (job.ogImage
+            ? `${base}/careers?job=${job.id}`
+            : job.website ? `https://${job.website}` : job.applyUrl || `${base}/careers?job=${job.id}`)
         : `${base}/careers?job=${job.id}`;
       const r = await postToFacebook({ message, link });
       results.facebook = { ok: true, id: r.id };
