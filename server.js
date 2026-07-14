@@ -25,6 +25,7 @@ const {
   notify: notifyTelegram,
   notifyNewLead, notifyPostRun, notifyError,
 } = require('./lib/telegram-notify');
+const { getTodaySponsorJob, findSponsorJobById } = require('./lib/sponsors');
 
 const app = express();
 app.use(cors());
@@ -2823,6 +2824,10 @@ function enrichJob(j) {
 }
 
 function findJobById(id) {
+  // Sponsored jobs are synthetic — resolved from lib/sponsors instead of
+  // the scraped data files.
+  const sponsor = findSponsorJobById(id);
+  if (sponsor) return sponsor;
   const emailJobs = loadEmailJobs ? loadEmailJobs() : [];
   const jobs = loadJobs();
   const all = [...emailJobs, ...jobs];
@@ -3168,6 +3173,24 @@ async function runDailyPost(count = 5) {
   return { posted: runResults.length, results: runResults };
 }
 
+// Sponsor slot — posts today's rotating position for one of our own brands.
+// Returns the same {posted, results} shape as runDailyPost so the cron and
+// telegram notifier can consume both without branching.
+async function runSponsorSlot(sponsorId) {
+  const job = getTodaySponsorJob(sponsorId);
+  if (!job) {
+    return { skipped: true, reason: `unknown sponsor: ${sponsorId}` };
+  }
+  const r = await postJobToChannels(job);
+  const state = loadSocialPosted();
+  // Sponsors don't need dedup — a new position rotates in daily and it's
+  // fine to repeat after the cycle completes. So we only append to history,
+  // not to the `posted` set the scraped-jobs picker uses.
+  state.history = (state.history || []).concat(r).slice(-500);
+  saveSocialPosted(state);
+  return { posted: 1, results: [r] };
+}
+
 app.get('/api/social/status', (req, res) => {
   const state = loadSocialPosted();
   res.json({
@@ -3295,26 +3318,29 @@ app.listen(PORT, () => {
     runEmailJobsScan();
   });
 
-  // Spread posts across three engagement peaks in Cairo time so the feed
-  // doesn't dump 5+ jobs in a 30-minute window (which reads as bot-y and
-  // gets throttled by FB's ranking). Each slot posts 1–3 random — the day
-  // still lands in the 3–9 total we've been running with.
+  // Six slots per day, one post each — alternating scraped jobs with
+  // sponsored posts for Wasla / Finalizat / Rezolyzer. Times are UTC and
+  // target 10ص / 12ظ / 2م / 4م / 6م / 8م Cairo year-round. The ±1h drift
+  // between EEST and EET is acceptable for engagement.
   //
-  // Times are UTC. Egypt runs EEST (UTC+3) during summer / EET (UTC+2)
-  // otherwise. The offsets here target ~10 / 14 / 20 Cairo year-round —
-  // acceptable ±1h drift is fine for engagement, and it means we don't need
-  // TZ-aware cron.
+  // Each slot's kind determines the source:
+  //   - 'job'       → pickJobsToPost(1), posts scraped email-job
+  //   - 'sponsor'   → getTodaySponsorJob(id), rotates the sponsor's positions
   const SLOTS = [
-    { label: 'morning',   cron: '0 7 * * *'  },  // 10:00 EEST / 09:00 EET
-    { label: 'afternoon', cron: '0 11 * * *' },  // 14:00 EEST / 13:00 EET
-    { label: 'evening',   cron: '0 17 * * *' },  // 20:00 EEST / 19:00 EET
+    { label: '10ص',  cron: '0 7 * * *',  kind: 'job' },
+    { label: '12ظ',  cron: '0 9 * * *',  kind: 'sponsor', sponsor: 'wasla' },
+    { label: '2م',   cron: '0 11 * * *', kind: 'job' },
+    { label: '4م',   cron: '0 13 * * *', kind: 'sponsor', sponsor: 'finalizat' },
+    { label: '6م',   cron: '0 15 * * *', kind: 'job' },
+    { label: '8م',   cron: '0 17 * * *', kind: 'sponsor', sponsor: 'rezolyzer' },
   ];
   for (const slot of SLOTS) {
     cron.schedule(slot.cron, async () => {
-      const count = 1 + Math.floor(Math.random() * 3); // 1–3 per slot
-      console.log(`[Cron] ${slot.label} slot — ${count} job(s)`);
+      console.log(`[Cron] ${slot.label} slot (${slot.kind}${slot.sponsor ? ':' + slot.sponsor : ''})`);
       try {
-        const result = await runDailyPost(count);
+        const result = slot.kind === 'sponsor'
+          ? await runSponsorSlot(slot.sponsor)
+          : await runDailyPost(1);
         result.slot = slot.label;
         notifyPostRun(result);
       } catch (err) {
